@@ -39,12 +39,7 @@ mamba activate deeprank-ab
 ```
 
 3. Install ANARCI
-
-```bash
-git clone https://github.com/oxpig/ANARCI
-cd ANARCI
-python setup.py install 
-```
+Refer to https://github.com/oxpig/ANARCI for installation instructions. # hmmscan is already included in the environment.
 
 
 

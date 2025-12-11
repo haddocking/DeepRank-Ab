@@ -10,6 +10,7 @@ from multiprocessing import Pool
 import sys 
 BASE = Path(__file__).resolve().parent 
 hmmscan_path = BASE / "ANARCI"
+print("Using ANARCI path:", hmmscan_path)
 
 
 
