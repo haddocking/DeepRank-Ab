@@ -18,7 +18,6 @@ This repository provides full inference pipleline for model described in the pap
 * **FASTA Conversion:** Generate FASTA for annotation and ESM-compatible merged sequences.
 * **ESM Embeddings:** Compute embeddings using `esm2_t33_650M_UR50D`.
 * **Graph Generation:** Build atom-level graphs with pre-computed node and edge features.
-* **Clustering:** Pre-cluster nodes for efficient neural network inference.
 * **Prediction:** Evaluate models with pretrained weights and output predicted DockQ scores.
 
 ---
@@ -38,6 +37,17 @@ cd DeepRank-Ab
 mamba env create -f environment-gpu.yml
 mamba activate deeprank-ab
 ```
+
+3. Install ANARCI
+
+```bash
+git clone https://github.com/oxpig/ANARCI
+cd ANARCI
+python setup.py install 
+```
+
+
+
 
 
 ## Usage
@@ -90,7 +100,7 @@ PDB Input
    │
    ├─> Annotate CDRs
    │
-   ├─> Build atom-level graph (contacts & orientation)
+   ├─> Build atom-level graph with node & edge features
    │
    ├─> Add embeddings to graph
    │
