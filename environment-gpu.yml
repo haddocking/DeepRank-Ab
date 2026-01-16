@@ -8,7 +8,7 @@ dependencies:
   - _libgcc_mutex=0.1
   - _openmp_mutex=5.1
   - appdirs=1.4.4
-  - biopython=1.78
+  - biopython=1.85
   - blas=1.0
   - brotli=1.0.9
   - brotli-bin=1.0.9
