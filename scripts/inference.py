@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 DeepRank-Ab Inference Pipeline
+(robust against Biopython chain/residue ID collisions)
 """
 
 import argparse
@@ -11,7 +12,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import h5py
 import pandas as pd
@@ -80,6 +81,21 @@ log.addHandler(handler)
 
 
 # ===============================================================
+# HELPERS
+# ===============================================================
+
+
+def _norm_chain(x: Optional[str]) -> Optional[str]:
+    """Normalize chain ID args. Treat '-', 'none', 'null' etc. as missing."""
+    if x is None:
+        return None
+    s = str(x).strip()
+    if s.lower() in {"", "none", "null", "-", "na"}:
+        return None
+    return s
+
+
+# ===============================================================
 # WORKSPACE SETUP
 # ===============================================================
 
@@ -104,7 +120,7 @@ def split_input_pdb(pdb_file: Path) -> List[Path]:
     output_dir.mkdir(exist_ok=True)
 
     io = PDBIO()
-    saved = []
+    saved: List[Path] = []
 
     is_ensemble = len(list(structure)) > 1
 
@@ -144,47 +160,100 @@ def three_to_one() -> dict:
     }
 
 
-def get_chain_sequence(structure, chain_id) -> str:
+def get_chain_sequence(structure, chain_id: Optional[str]) -> str:
+    if not chain_id:
+        return ""
     try:
         chain = structure[0][chain_id]
     except KeyError:
         return ""
 
     mapping = three_to_one()
-    return "".join(mapping.get(res.get_resname(), "X") for res in chain)
+    seq = []
+    for res in chain:
+        # include only standard residues (best-effort; unknowns become X)
+        seq.append(mapping.get(res.get_resname(), "X"))
+    return "".join(seq)
 
 
 def create_merged_pdb(
     pdb_file, heavy_chain_id, light_chain_id, antigen_chain_id, output_pdb
 ):
+    """
+    Collision-proof merged PDB builder.
+
+    Output contains:
+      - antibody (heavy + optional light) in chain 'A'
+      - antigen in chain 'B'
+
+    This avoids Biopython ValueErrors by never renaming/renumbering entities in place.
+    """
     parser = PDBParser(QUIET=True)
-    structure = parser.get_structure("model", pdb_file)
-    model = structure[0]
+    s0 = parser.get_structure("model", pdb_file)
+    m0 = next(s0.get_models())
 
-    chainA_res = []
-    chainB_res = []
+    HID = _norm_chain(heavy_chain_id)
+    LID = _norm_chain(light_chain_id)
+    AID = _norm_chain(antigen_chain_id)
 
-    for chain in model:
-        cid = chain.id
-        if cid in {heavy_chain_id, light_chain_id}:
-            chainA_res.extend(res for res in chain)
-        elif cid == antigen_chain_id:
-            chainB_res.extend(res for res in chain)
+    chain_ids = {c.id for c in m0.get_chains()}
+    if HID not in chain_ids:
+        raise ValueError(f"Heavy chain '{HID}' not found (have {sorted(chain_ids)})")
+    if AID not in chain_ids:
+        raise ValueError(f"Antigen chain '{AID}' not found (have {sorted(chain_ids)})")
+    if LID is not None and LID not in chain_ids:
+        raise ValueError(f"Light chain '{LID}' not found (have {sorted(chain_ids)})")
 
-    # Renumber
-    for i, r in enumerate(chainA_res, start=1):
-        r.id = (" ", i, " ")
-        r.parent.id = "A"
+    chH = m0[HID]
+    chL = m0[LID] if LID is not None else None
+    chAg = m0[AID]
 
-    for i, r in enumerate(chainB_res, start=1):
-        r.id = (" ", i, " ")
-        r.parent.id = "B"
+    from Bio.PDB.Structure import Structure
+    from Bio.PDB.Model import Model
+    from Bio.PDB.Chain import Chain
+
+    s = Structure("merged")
+    m = Model(0)
+    s.add(m)
+
+    chAb = Chain("A")  # merged antibody
+    chBg = Chain("B")  # antigen
+    m.add(chAb)
+    m.add(chBg)
+
+    def _sorted_res(chain_obj):
+        residues = list(chain_obj.get_residues())
+
+        def key(r):
+            hetflag, resseq, icode = r.id
+            icode_key = "" if icode == " " else icode
+            return (hetflag.strip(), int(resseq), icode_key)
+
+        return sorted(residues, key=key)
+
+    def _copy_into(dst_chain, src_chain, start_resseq=1):
+        cur = start_resseq
+        for r0 in _sorted_res(src_chain):
+            r = r0.copy()
+            hetflag, _, _icode = r.id
+            # drop insertion codes for stability
+            r.id = (hetflag, cur, " ")
+            dst_chain.add(r)
+            cur += 1
+        return cur
+
+    next_res = 1
+    next_res = _copy_into(chAb, chH, start_resseq=next_res)
+    if chL is not None:
+        next_res = _copy_into(chAb, chL, start_resseq=next_res)
+
+    _copy_into(chBg, chAg, start_resseq=1)
 
     output_pdb = Path(output_pdb)
     output_pdb.parent.mkdir(parents=True, exist_ok=True)
 
     io = PDBIO()
-    io.set_structure(structure)
+    io.set_structure(s)
     io.save(str(output_pdb))
 
 
@@ -195,16 +264,25 @@ def convert_pdb_to_fastas(
     light_chain_id="L",
     antigen_chain_id="A",
 ):
+    """
+    Create:
+      - annotation FASTA: separate H and L (if present)
+      - ESM FASTA: merged antibody sequence as A, antigen as B
+    """
     fasta_outdir.mkdir(parents=True, exist_ok=True)
+
+    HID = _norm_chain(heavy_chain_id)
+    LID = _norm_chain(light_chain_id)
+    AID = _norm_chain(antigen_chain_id)
 
     parser = PDBParser(QUIET=True)
     structure = parser.get_structure("model", pdb_file)
 
     root = pdb_file.stem
 
-    seq_H = get_chain_sequence(structure, heavy_chain_id)
-    seq_L = get_chain_sequence(structure, light_chain_id)
-    seq_Ag = get_chain_sequence(structure, antigen_chain_id)
+    seq_H = get_chain_sequence(structure, HID)
+    seq_L = get_chain_sequence(structure, LID)
+    seq_Ag = get_chain_sequence(structure, AID)
 
     # FASTA: annotation
     fasta_annot = fasta_outdir / f"{root}_HL.fasta"
@@ -214,7 +292,7 @@ def convert_pdb_to_fastas(
         if seq_L:
             f.write(f">{root}.L\n{seq_L}\n")
 
-    # FASTA: ESM
+    # FASTA: ESM (A=Ab merged, B=Ag)
     fasta_esm = fasta_outdir / f"{root}_merged_A_B.fasta"
     with open(fasta_esm, "w") as f:
         f.write(f">{root}.A\n{seq_H + seq_L}\n")
@@ -232,7 +310,13 @@ def preprocess_input_pdb(
     antigen_chain_id: str,
 ):
     fasta_out = work_dir / "fastas"
-    fasta_annot, fasta_esm = convert_pdb_to_fastas(pdb_file, fasta_out)
+    fasta_annot, fasta_esm = convert_pdb_to_fastas(
+        pdb_file,
+        fasta_out,
+        heavy_chain_id=heavy_chain_id,
+        light_chain_id=light_chain_id,
+        antigen_chain_id=antigen_chain_id,
+    )
 
     merged_pdb = work_dir / "processed" / f"{pdb_file.stem}.pdb"
     create_merged_pdb(
@@ -344,7 +428,7 @@ def get_embedding(fasta_file: Path, output_dir: Path) -> List[Path]:
         (i + model.num_layers + 1) % (model.num_layers + 1) for i in REPR_LAYERS
     ]
 
-    emb_paths = []
+    emb_paths: List[Path] = []
     with torch.no_grad():
         for labels, strs, toks in loader:
             if torch.cuda.is_available():
@@ -391,7 +475,7 @@ def gen_graph_cdrs_orientation_contacts_one_by_one(
         use_regions=use_regions,
         region_json=region_json,
         add_orientation=True,
-        contact_features=True,
+        contact_features=contact_features,
         antigen_chainid=antigen_chainid,
         use_voro=use_voro,
         embedding_path=embedding_path,
@@ -399,7 +483,7 @@ def gen_graph_cdrs_orientation_contacts_one_by_one(
     return outfile_name
 
 
-def correct_json(work_dir: str) -> Path:
+def correct_json(work_dir: Path) -> Path:
     region_json = Path(work_dir) / "annotations" / "annotations_cdrs.json"
     if not region_json.is_file():
         raise FileNotFoundError(f"Region JSON not found: {region_json}")
@@ -414,23 +498,51 @@ def correct_json(work_dir: str) -> Path:
     return region_json
 
 
-def add_embedding(work_dir: Path, hdf5_path: str, pdbid: str):
+def add_embedding(work_dir: Path, hdf5_path: str):
+    """
+    Add ESM embedding feature to each molecule in the graph HDF5.
+
+    Embedding files are expected at:
+      {work_dir}/processed/embeddings/{mol}.{chain}.pt
+    where mol is the molecule name used by GraphHDF5 (often the pdb stem),
+    and chain is 'A' or 'B' (merged antibody/antigen chains).
+    """
     base = work_dir / "processed" / "embeddings"
 
+    def _resolve_pt(mol_name: str, chain: str) -> Path:
+        candidates = [mol_name, mol_name.replace(".pdb", ""), mol_name.split("/")[-1]]
+        # also strip common suffixes if present
+        if candidates[0].endswith("_graph"):
+            candidates.append(candidates[0].removesuffix("_graph"))
+        for cand in candidates:
+            pt = base / f"{cand}.{chain}.pt"
+            if pt.is_file():
+                return pt
+        # last resort: try exact mol_name as stem-ish
+        pt = base / f"{Path(mol_name).stem}.{chain}.pt"
+        return pt
+
     with h5py.File(hdf5_path, "a") as f:
-        for mol in f.keys():
+        for mol in list(f.keys()):
             residues = f[mol]["nodes"][()]
             emb = torch.zeros(len(residues), 1)
 
             for i, res in enumerate(residues):
                 chain, idx = res[0].decode(), int(res[1].decode())
-                pt = base / f"{pdbid}.{chain}.pt"
+                pt = _resolve_pt(mol, chain)
 
                 if not pt.is_file():
-                    raise FileNotFoundError(f"Missing embedding: {pt}")
+                    raise FileNotFoundError(
+                        f"Missing embedding: {pt} (mol={mol}, chain={chain})"
+                    )
 
                 data = torch.load(pt, map_location="cpu")
+                # Your config uses REPR_LAYERS=[33] and INCLUDE includes per_tok
                 vecs = data["representations"][33]
+                if idx < 1 or idx > vecs.shape[0]:
+                    raise IndexError(
+                        f"Residue index out of bounds for {pt}: idx={idx}, len={vecs.shape[0]}"
+                    )
                 emb[i] = vecs[idx - 1].mean()
 
             grp = f[mol].require_group("node_data")
@@ -449,10 +561,9 @@ def add_embedding(work_dir: Path, hdf5_path: str, pdbid: str):
 def deeprank_evaluate_model(
     target_name: str,
     hdf5_test: str,
-    model_path: str = MODEL_PATH,
+    model_path: str = str(MODEL_PATH),
     save_name: str = "eval_predictions.hdf5",
 ) -> Path:
-
     net = NeuralNet(
         database=hdf5_test,
         Net=egnn,
@@ -477,45 +588,30 @@ def deeprank_evaluate_model(
 
 def hdf5_to_csv(hdf5_path: str) -> str:
     """Convert DeepRank-Ab prediction HDF5 to CSV with mol and dockq values."""
-
     hdf5_path = Path(hdf5_path)
     out_csv = hdf5_path.with_suffix(".csv")
 
     with h5py.File(hdf5_path, "r") as f:
         group = f["epoch_0000"]["pred"]
-
-        # read data
         mol = group["mol"][()]
         dockq = group["outputs"][()]
-
-        # decode mol names
         mol = [m.decode("utf-8") for m in mol]
 
-    # create dataframe
     df = pd.DataFrame({"mol": mol, "dockq": dockq})
-
-    # save csv
     df.to_csv(out_csv, index=False)
     return str(out_csv)
 
 
 def parse_output(csv_output: str) -> None:
-    """
-    Read CSV created from HDF5 (mol, dockq) and rewrite it in clean format:
-    pdb_id,predicted_dockq
-    """
+    """Rewrite output to pdb_id,predicted_dockq and log predictions."""
     df = pd.read_csv(csv_output)
-
-    # Rename columns to consistent names
     df = df.rename(columns={"mol": "pdb_id", "dockq": "predicted_dockq"})
 
-    # Log predictions
     for _, row in df.iterrows():
         log.info(
             f"Predicted dockq is {row['predicted_dockq']:.3f} for PDB ID {row['pdb_id']}"
         )
 
-    # Save cleaned CSV
     df.to_csv(csv_output, index=False)
     log.info(f"Output written to {csv_output}")
 
@@ -534,7 +630,9 @@ def main():
     args = parser.parse_args()
 
     pdb_file = Path(args.pdb_file)
-    HID, LID, AID = args.heavy_chain_id, args.light_chain_id, args.antigen_chain_id
+    HID = args.heavy_chain_id
+    LID = args.light_chain_id
+    AID = args.antigen_chain_id
 
     identificator = f"{pdb_file.stem}-deeprank_ab_pred_{HID}{LID}_{AID}"
     work = setup_workspace(identificator)
@@ -545,23 +643,32 @@ def main():
 
     # Split ensemble
     pdb_models = split_input_pdb(copied)
-    cores = min(MAX_cores, len(pdb_models))
+
+    # Choose cores sensibly (don’t tie to number of models)
+    avail = os.cpu_count() or 1
+    cores = max(1, min(MAX_cores, avail))
+
+    processed_dir = work / "processed"
+    processed_dir.mkdir(exist_ok=True)
+
+    # Build merged PDBs + embeddings for each model
+    fasta_annot = None
+    embed_dir = processed_dir / "embeddings"
+    embed_dir.mkdir(exist_ok=True)
 
     for pdb in pdb_models:
-        temp = work / "processed"
-        _, (fasta_annot, fasta_esm) = preprocess_input_pdb(
-            work, pdb, HID, LID, AID
-        )
-
-        embed_dir = temp / "embeddings"
+        _merged_pdb, (fasta_annot, fasta_esm) = preprocess_input_pdb(work, pdb, HID, LID, AID)
         get_embedding(fasta_esm, embed_dir)
 
-    # Annotate
+    if fasta_annot is None:
+        raise RuntimeError("No FASTA files were produced (unexpected).")
+
+    # Annotate (merged PDB uses antigen chain 'B')
     anno_dir = work / "annotations"
     anno_dir.mkdir(exist_ok=True)
 
     annotate_folder_one_by_one_mp(
-        temp,
+        processed_dir,
         Path(fasta_annot.parent),
         output_dir=str(anno_dir),
         n_cores=cores,
@@ -571,40 +678,40 @@ def main():
     region_json = correct_json(work)
     log.info("Region JSON corrected.")
 
-    # Graph generation
+    # Graph generation (merged PDB uses antigen chain 'B')
     graph_out = work / f"{identificator}_graph.hdf5"
 
     gen_graph_cdrs_orientation_contacts_one_by_one(
-        pdb_dir=work / "processed",
+        pdb_dir=str(processed_dir),
         n_cores=cores,
         outfile_name=str(graph_out),
         use_regions=True,
         region_json=str(region_json),
-        antigen_chainid=AID,
+        antigen_chainid="B",
         graph_type="atom",
         use_voro=True,
         embedding_path=str(embed_dir),
         contact_features=True,
     )
 
-    # Add embeddings
-    for pdb in pdb_models:
-        pdbid = pdb.stem
-    add_embedding(work, str(graph_out), pdbid)
+    # Add embeddings to HDF5 graphs
+    add_embedding(work, str(graph_out))
 
     # Cluster + predict
     cluster(str(graph_out))
     deeprank_evaluate_model(
         "dockq",
         str(graph_out),
-        model_path=MODEL_PATH,
+        model_path=str(MODEL_PATH),
         save_name=f"{identificator}_predictions.hdf5",
     )
 
-    # parse output
-    csv_output = hdf5_to_csv(str(work / f"{identificator}_predictions.hdf5"))
+    # Parse output
+    pred_h5 = work / f"{identificator}_predictions.hdf5"
+    csv_output = hdf5_to_csv(str(pred_h5))
     parse_output(csv_output)
 
 
 if __name__ == "__main__":
     main()
+
