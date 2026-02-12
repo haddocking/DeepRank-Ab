@@ -11,7 +11,7 @@ import torch
 
 class AtomGraph(Graph):
     """
-    Build a residue-level interface graph from a PDB and decorate it with features.
+    Build a atom-level interface graph from a PDB and decorate it with features.
     Nodes are residues; edges include interface and intra-chain contacts (both directions).
     Optional extras: PSSM alignment, region labels, edge orientations, contact features.
     """
@@ -31,7 +31,7 @@ class AtomGraph(Graph):
     ):
         super().__init__()
         # basic ids
-        self.type = "residue"
+        self.type = "atom"
         self.pdb = pdb
         self.name = os.path.splitext(os.path.basename(pdb))[0]
 
