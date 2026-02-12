@@ -61,6 +61,7 @@ class GraphHDF5(object):
         if len(pdbs) == 0:
             raise FileNotFoundError(f"no .pdb files found under {pdb_path}")
 
+        print(f"found {len(pdbs)} PDB files for graph generation")
 
         # --- reference structure ---
         ref = os.path.join(ref_path, base + ".pdb") if ref_path else None
@@ -127,7 +128,12 @@ class GraphHDF5(object):
             if not os.path.isdir(tmpdir):
                 os.mkdir(tmpdir)
 
-            pool = mp.Pool(nproc)
+            chunksize = max(1, len(pdbs) // (nproc * 8))
+            ctx = mp.get_context("spawn")
+            
+            print(f"running in parallel with {nproc} processes")
+            
+            pool = ctx.Pool(nproc)
             part = partial(
                 self._pickle_one_graph,
                 ref=ref,
@@ -137,9 +143,14 @@ class GraphHDF5(object):
                 antigen_chainid=self.antigen_chainid,
                 embedding_path=self.embedding_path 
             )
-            pool.map(part, pdbs)
-            pool.close()
-            pool.join()
+            
+            # FIXED: Replace blocking pool.map with streaming imap_unordered + safe cleanup
+            try:
+                for _ in pool.imap_unordered(part, pdbs, chunksize=chunksize):
+                    pass
+            finally:
+                pool.close()
+                pool.join()
 
             # merge pickled graphs into the HDF5 file
             with h5py.File(outfile, "w") as f5:
@@ -328,5 +339,4 @@ class GraphHDF5(object):
                 grp.create_dataset('embedding', data=emb_tensor.numpy())
 
             print(f"embeddings written to {outfile}")
-
 
