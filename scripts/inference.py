@@ -95,6 +95,15 @@ def _norm_chain(x: Optional[str]) -> Optional[str]:
     return s
 
 
+def clamp_cores(requested: int, task_count: int) -> int:
+    """
+    Clamp number of cores to avoid creating more processes than tasks.
+    Prevents nproc from exceeding CPU count or task count.
+    """
+    avail = os.cpu_count() or 1
+    return max(1, min(requested, avail, task_count))
+
+
 # ===============================================================
 # WORKSPACE SETUP
 # ===============================================================
@@ -644,7 +653,7 @@ def main():
     # Split ensemble
     pdb_models = split_input_pdb(copied)
 
-    # Choose cores sensibly (don’t tie to number of models)
+    # Choose cores sensibly (don't tie to number of models)
     avail = os.cpu_count() or 1
     cores = max(1, min(MAX_cores, avail))
 
@@ -667,23 +676,30 @@ def main():
     anno_dir = work / "annotations"
     anno_dir.mkdir(exist_ok=True)
 
+    # FIXED: Clamp cores based on actual number of PDB models for annotation
+    n_cores_anno = clamp_cores(cores, len(pdb_models))
+
     annotate_folder_one_by_one_mp(
         processed_dir,
         Path(fasta_annot.parent),
         output_dir=str(anno_dir),
-        n_cores=cores,
+        n_cores=n_cores_anno,
         antigen_chainid="B",
     )
 
     region_json = correct_json(work)
     log.info("Region JSON corrected.")
 
+    # Clamp cores based on actual number of PDBs for graph generation
+    pdbs_for_graph = sorted(processed_dir.glob("*.pdb"))
+    n_cores_graph = clamp_cores(cores, len(pdbs_for_graph))
+
     # Graph generation (merged PDB uses antigen chain 'B')
     graph_out = work / f"{identificator}_graph.hdf5"
 
     gen_graph_cdrs_orientation_contacts_one_by_one(
         pdb_dir=str(processed_dir),
-        n_cores=cores,
+        n_cores=n_cores_graph,
         outfile_name=str(graph_out),
         use_regions=True,
         region_json=str(region_json),
@@ -714,4 +730,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
