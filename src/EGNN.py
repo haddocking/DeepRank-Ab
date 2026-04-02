@@ -151,7 +151,6 @@ class egnn(nn.Module):
         super().__init__()
 
         self.use_edge_vec = bool(edge_in_v and edge_in_v > 0)
-        print(f"edge vector features: {'on' if self.use_edge_vec else 'off'} (edge_in_v={edge_in_v})")
         self._did_info_print = False
 
         # balanced hyperparameters

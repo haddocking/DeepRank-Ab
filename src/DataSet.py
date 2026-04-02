@@ -148,7 +148,6 @@ class HDF5DataSet(Dataset):
                 with_centering=True,
                 with_scaling=True,
             ).fit(all_elec)
-            print("elec scaler fitted")
         else:
             self.elec_scaler = None
 
@@ -179,7 +178,6 @@ class HDF5DataSet(Dataset):
         """
         Basic integrity check: drop empty or unreadable files.
         """
-        print("checking dataset integrity")
         remove_file = []
         for fname in self.database:
             try:
@@ -226,11 +224,9 @@ class HDF5DataSet(Dataset):
           - explicit requests are only validated for existence here.
         """
         with h5py.File(self.database[0], "r") as f:
-            print("checking edge features in", self.database[0])
             mol_key = list(f.keys())[0]
             edge_grp = f[f"{mol_key}/edge_data/"]
             all_keys = [k for k in edge_grp.keys()]
-            print("available edge features:", all_keys)
 
             if self.edge_feature == "all":
                 self.edge_feature = list(all_keys)
@@ -492,14 +488,12 @@ class HDF5DataSet(Dataset):
         """
         Build the (file, group) index for all complexes, with optional filtering.
         """
-        print("processing dataset")
         self.index_complexes = []
 
         desc = "{:25s}".format("train dataset")
         data_iter = tqdm(self.database, desc=desc, file=sys.stdout) if self.tqdm else self.database
         if not self.tqdm:
-            print(self.name or "dataset")
-        sys.stdout.flush()
+            sys.stdout.flush()
 
         for fdata in data_iter:
             if self.tqdm:

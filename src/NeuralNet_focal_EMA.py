@@ -252,7 +252,7 @@ class NeuralNet(object):
         )
         #PreCluster(test_dataset, method=self.cluster_nodes)
         self.test_loader = DataLoader(test_dataset, num_workers=self.num_workers)
-        print("test set loaded")
+
 
         self.put_model_to_device(test_dataset, Net)
         self.set_loss()
@@ -318,7 +318,7 @@ class NeuralNet(object):
             shuffle=self.shuffle,
             num_workers=self.num_workers,
         )
-        print("training set loaded")
+
 
         if self.percent[1] > 0.0:
             self.valid_loader = DataLoader(
@@ -327,7 +327,7 @@ class NeuralNet(object):
                 shuffle=False,
                 num_workers=self.num_workers,
             )
-            print("validation set loaded")
+
 
         if database_eval is not None:
             print("loading independent validation set")
@@ -389,9 +389,6 @@ class NeuralNet(object):
         self.device = (torch.device(self.device_name)
                        if self.device_name
                        else torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
-        print("device:", self.device)
-        if self.device.type == "cuda":
-            print(torch.cuda.get_device_name(0))
 
         example = dataset.get(0)
 
@@ -400,7 +397,6 @@ class NeuralNet(object):
             edge_s, edge_v = example.edge_attr
             in_ns, in_nv = node_s.shape[1], node_v.shape[1]
             in_es, in_ev = edge_s.shape[1], edge_v.shape[1]
-            print(f"init equivariant: node_s {in_ns}, node_v {in_nv}, edge_s {in_es}, edge_v {in_ev}")
 
             if self.task == "reg":
                 out_dim = 1
@@ -413,7 +409,7 @@ class NeuralNet(object):
         else:
             in_feats   = example.x.shape[1]
             edge_feats = example.edge_attr.shape[1]
-            print(f"init scalar: node {in_feats}, edge {edge_feats}")
+
 
             if self.task == "reg":
                 out_dim = 1
@@ -813,7 +809,6 @@ class NeuralNet(object):
                     target=self.target,  # still pass, but unused if missing
                     clustering_method=self.cluster_nodes,
                 )
-                print("prediction set loaded")
                 self.pred_loader = DataLoader(
                     pred_dataset,
                     num_workers=self.num_workers,
@@ -854,7 +849,6 @@ class NeuralNet(object):
             self.data["pred"] = data
             self._export_epoch_hdf5(0, self.data)
 
-            print(f"✅ Predictions saved to {fname}")
             return out, mols
 
     def eval(self, loader):

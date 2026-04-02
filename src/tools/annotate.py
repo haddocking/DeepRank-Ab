@@ -10,7 +10,7 @@ from anarci import anarci
 
 BASE = Path(__file__).resolve().parent
 hmmscan_path = BASE / "ANARCI"
-print("Using ANARCI path:", hmmscan_path)
+
 
 # residue code map (includes MSE -> M)
 THREE_TO_ONE = {

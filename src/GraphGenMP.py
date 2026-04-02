@@ -61,7 +61,6 @@ class GraphHDF5(object):
         if len(pdbs) == 0:
             raise FileNotFoundError(f"no .pdb files found under {pdb_path}")
 
-        print(f"found {len(pdbs)} PDB files for graph generation")
 
         # --- reference structure ---
         ref = os.path.join(ref_path, base + ".pdb") if ref_path else None
@@ -337,6 +336,4 @@ class GraphHDF5(object):
                 if 'embedding' in grp:
                     del grp['embedding']
                 grp.create_dataset('embedding', data=emb_tensor.numpy())
-
-            print(f"embeddings written to {outfile}")
 
