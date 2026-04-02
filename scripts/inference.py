@@ -20,6 +20,7 @@ import requests
 import torch
 from Bio.PDB import PDBParser, PDBIO
 from esm import FastaBatchedDataset, pretrained
+import numpy as np  # Added for contact counting
 
 # Add project root
 import sys
@@ -80,10 +81,7 @@ handler.setFormatter(logging.Formatter(" [%(levelname)s] %(message)s"))
 log.addHandler(handler)
 
 
-# ===============================================================
 # HELPERS
-# ===============================================================
-
 
 def _norm_chain(x: Optional[str]) -> Optional[str]:
     """Normalize chain ID args. Treat '-', 'none', 'null' etc. as missing."""
@@ -104,11 +102,8 @@ def clamp_cores(requested: int, task_count: int) -> int:
     return max(1, min(requested, avail, task_count))
 
 
-# ===============================================================
+
 # WORKSPACE SETUP
-# ===============================================================
-
-
 def setup_workspace(identificator: str) -> Path:
     workspace = Path.cwd() / identificator
     workspace.mkdir(parents=True, exist_ok=True)
@@ -116,17 +111,12 @@ def setup_workspace(identificator: str) -> Path:
     return workspace
 
 
-# ===============================================================
 # PDB PROCESSING
-# ===============================================================
-
-
-def split_input_pdb(pdb_file: Path) -> List[Path]:
+def split_input_pdb(pdb_file: Path, out_dir: Path) -> List[Path]:
     parser = PDBParser(QUIET=True)
     structure = parser.get_structure("structure", pdb_file)
 
-    output_dir = pdb_file.parent / f"{pdb_file.stem}_split"
-    output_dir.mkdir(exist_ok=True)
+    out_dir.mkdir(exist_ok=True)
 
     io = PDBIO()
     saved: List[Path] = []
@@ -135,14 +125,13 @@ def split_input_pdb(pdb_file: Path) -> List[Path]:
 
     for model in structure:
         model_id = model.id if is_ensemble else 0
-        out = output_dir / f"{pdb_file.stem}_model_{model_id}.pdb"
+        out = out_dir / f"{pdb_file.stem}_model_{model_id}.pdb"
         io.set_structure(model)
         io.save(str(out))
         saved.append(out)
 
     log.info(f"Split PDB into {len(saved)} model(s)")
     return saved
-
 
 def three_to_one() -> dict:
     return {
@@ -335,10 +324,6 @@ def preprocess_input_pdb(
     return merged_pdb, (fasta_annot, fasta_esm)
 
 
-# ===============================================================
-# WEIGHTS AND EMBEDDINGS
-# ===============================================================
-
 
 def calculate_checksum(path: str, algo="sha256") -> str:
     h = hashlib.new(algo)
@@ -449,11 +434,8 @@ def get_embedding(fasta_file: Path, output_dir: Path) -> List[Path]:
     return emb_paths
 
 
-# ===============================================================
-# CLUSTERING AND GRAPH GEN
-# ===============================================================
 
-
+# CLUSTERING AND GRAPH GENERATION
 def cluster(hdf5_path: str):
     dataset = HDF5DataSet(name="Train", root="./", database=hdf5_path)
     PreCluster(dataset, method="mcl")
@@ -513,7 +495,7 @@ def add_embedding(work_dir: Path, hdf5_path: str):
 
     Embedding files are expected at:
       {work_dir}/processed/embeddings/{mol}.{chain}.pt
-    where mol is the molecule name used by GraphHDF5 (often the pdb stem),
+    where mol is the molecule name used by GraphHDF5,
     and chain is 'A' or 'B' (merged antibody/antigen chains).
     """
     base = work_dir / "processed" / "embeddings"
@@ -562,11 +544,7 @@ def add_embedding(work_dir: Path, hdf5_path: str):
     log.info(f"Added embeddings → {hdf5_path}")
 
 
-# ===============================================================
 # MODEL EVALUATION
-# ===============================================================
-
-
 def deeprank_evaluate_model(
     target_name: str,
     hdf5_test: str,
@@ -610,26 +588,109 @@ def hdf5_to_csv(hdf5_path: str) -> str:
     df.to_csv(out_csv, index=False)
     return str(out_csv)
 
+def ca_coords(pdb_file: Path, chain_id: str, max_resid=125) -> np.ndarray:
+    coords = []
+    chains_seen = set()
 
-def parse_output(csv_output: str) -> None:
-    """Rewrite output to pdb_id,predicted_dockq and log predictions."""
+    with open(pdb_file, "r") as f:
+        for line in f:
+            if not line.startswith("ATOM"):
+                continue
+            atom_name = line[12:16].strip()
+            chain = line[21].strip()
+            chains_seen.add(chain)
+            if chain != chain_id or atom_name != "CA":
+                continue
+            resid_str = line[22:26].strip()
+            if not resid_str.isdigit():
+                continue
+            resid = int(resid_str)
+            if resid > max_resid:
+                continue
+            x = float(line[30:38])
+            y = float(line[38:46])
+            z = float(line[46:54])
+            coords.append([x, y, z])
+
+    coords_arr = np.array(coords, dtype=float)
+    # Ensure shape is (n, 3), even if empty
+    if coords_arr.size == 0:
+        coords_arr = coords_arr.reshape((0, 3))
+
+    return coords_arr
+
+# ===============================================================
+# LOW-CONTACT FLAG FOR ANTIBODIES
+
+def flag_low_contacts(pdb_file: Path, heavy_chain_id, light_chain_id, threshold=15):
+    """
+    Flag ONLY if:
+      - both heavy (H) and light (L) chains are present
+      - AND they have low contacts
+
+    If one is missing → do NOT flag (valid case)
+    """
+
+    coords_H = ca_coords(pdb_file, heavy_chain_id, max_resid=125)  # VH
+    coords_L = ca_coords(pdb_file, light_chain_id, max_resid=115)  # VL
+    # Compute contacts
+    dists = np.linalg.norm(coords_H[:, None, :] - coords_L[None, :, :], axis=-1)
+    n_contacts = np.sum(dists < 8.0)
+
+
+    if n_contacts < threshold:
+        log.warning(f"[FLAG] LOW H-L CONTACTS → {pdb_file.name}")
+        return True
+
+    return False
+
+def parse_output(csv_output: str, original_pdb_dir: Path,
+                 heavy_chain_id=None, light_chain_id=None) -> None:
+    """
+    Add quality flags based on ORIGINAL PDBs (before merging).
+    Skips check if either H or L chain is missing (valid nanobody or single-chain antibody),
+    and marks them as 'not_applicable'.
+    """
     df = pd.read_csv(csv_output)
     df = df.rename(columns={"mol": "pdb_id", "dockq": "predicted_dockq"})
 
-    for _, row in df.iterrows():
-        log.info(
-            f"Predicted dockq is {row['predicted_dockq']:.3f} for PDB ID {row['pdb_id']}"
+    flags = []
+
+    for pdb_id in df["pdb_id"]:
+        # find matching original PDB
+        matches = list(original_pdb_dir.glob(f"{pdb_id}*.pdb"))
+
+
+        pdb_file = matches[0]
+
+        # Skip contact check if H or L is missing
+        if not heavy_chain_id or not light_chain_id or heavy_chain_id == '-' or light_chain_id == '-':
+            flags.append("not_applicable")  # mark explicitly
+            continue
+
+        # Perform low-contact check
+        is_bad = flag_low_contacts(
+            pdb_file,
+            heavy_chain_id,
+            light_chain_id
         )
 
+        if is_bad:
+            flags.append("low_HL_contacts")
+        else:
+            flags.append("")
+
+    df["quality_flag"] = flags
+
+    df = df.sort_values(by="predicted_dockq", ascending=False)
     df.to_csv(csv_output, index=False)
-    log.info(f"Output written to {csv_output}")
+
+    log.info(f"Output written → {csv_output}")
 
 
 # ===============================================================
 # MAIN PIPELINE
 # ===============================================================
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("pdb_file")
@@ -650,33 +711,41 @@ def main():
     copied = work / pdb_file.name
     shutil.copy(pdb_file, copied)
 
-    # Split ensemble
-    pdb_models = split_input_pdb(copied)
 
-    # Choose cores sensibly (don't tie to number of models)
+    split_dir = work / "original_models"
+    split_dir.mkdir(exist_ok=True)
+
+    pdb_models = split_input_pdb(copied, split_dir)
+
+    # Choose cores sensibly
     avail = os.cpu_count() or 1
     cores = max(1, min(MAX_cores, avail))
 
     processed_dir = work / "processed"
     processed_dir.mkdir(exist_ok=True)
 
-    # Build merged PDBs + embeddings for each model
+    # ============================================================
+    # Build merged PDBs + embeddings 
+    # ============================================================
     fasta_annot = None
     embed_dir = processed_dir / "embeddings"
     embed_dir.mkdir(exist_ok=True)
 
     for pdb in pdb_models:
-        _merged_pdb, (fasta_annot, fasta_esm) = preprocess_input_pdb(work, pdb, HID, LID, AID)
+        _merged_pdb, (fasta_annot, fasta_esm) = preprocess_input_pdb(
+            work, pdb, HID, LID, AID
+        )
         get_embedding(fasta_esm, embed_dir)
 
     if fasta_annot is None:
         raise RuntimeError("No FASTA files were produced (unexpected).")
 
-    # Annotate (merged PDB uses antigen chain 'B')
+    # ============================================================
+    # Annotation
+    # ============================================================
     anno_dir = work / "annotations"
     anno_dir.mkdir(exist_ok=True)
 
-    # FIXED: Clamp cores based on actual number of PDB models for annotation
     n_cores_anno = clamp_cores(cores, len(pdb_models))
 
     annotate_folder_one_by_one_mp(
@@ -690,11 +759,12 @@ def main():
     region_json = correct_json(work)
     log.info("Region JSON corrected.")
 
-    # Clamp cores based on actual number of PDBs for graph generation
+    # ============================================================
+    # Graph generation
+    # ============================================================
     pdbs_for_graph = sorted(processed_dir.glob("*.pdb"))
     n_cores_graph = clamp_cores(cores, len(pdbs_for_graph))
 
-    # Graph generation (merged PDB uses antigen chain 'B')
     graph_out = work / f"{identificator}_graph.hdf5"
 
     gen_graph_cdrs_orientation_contacts_one_by_one(
@@ -710,11 +780,11 @@ def main():
         contact_features=True,
     )
 
-    # Add embeddings to HDF5 graphs
-    add_embedding(work, str(graph_out))
-
-    # Cluster + predict
+    # ============================================================
+    # Evaluation
+    # ============================================================
     cluster(str(graph_out))
+
     deeprank_evaluate_model(
         "dockq",
         str(graph_out),
@@ -722,10 +792,18 @@ def main():
         save_name=f"{identificator}_predictions.hdf5",
     )
 
-    # Parse output
     pred_h5 = work / f"{identificator}_predictions.hdf5"
-    csv_output = hdf5_to_csv(str(pred_h5))
-    parse_output(csv_output)
+    csv_out = hdf5_to_csv(str(pred_h5))
+
+    # ============================================================
+    # contact check
+    # ============================================================
+    parse_output(
+        csv_out,
+        split_dir, 
+        heavy_chain_id=HID,
+        light_chain_id=LID
+    )
 
 
 if __name__ == "__main__":
