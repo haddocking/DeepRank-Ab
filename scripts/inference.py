@@ -83,6 +83,7 @@ log.addHandler(handler)
 
 # HELPERS
 
+
 def _norm_chain(x: Optional[str]) -> Optional[str]:
     """Normalize chain ID args. Treat '-', 'none', 'null' etc. as missing."""
     if x is None:
@@ -100,7 +101,6 @@ def clamp_cores(requested: int, task_count: int) -> int:
     """
     avail = os.cpu_count() or 1
     return max(1, min(requested, avail, task_count))
-
 
 
 # WORKSPACE SETUP
@@ -132,6 +132,7 @@ def split_input_pdb(pdb_file: Path, out_dir: Path) -> List[Path]:
 
     log.info(f"Split PDB into {len(saved)} model(s)")
     return saved
+
 
 def three_to_one() -> dict:
     return {
@@ -324,7 +325,6 @@ def preprocess_input_pdb(
     return merged_pdb, (fasta_annot, fasta_esm)
 
 
-
 def calculate_checksum(path: str, algo="sha256") -> str:
     h = hashlib.new(algo)
     with open(path, "rb") as f:
@@ -432,7 +432,6 @@ def get_embedding(fasta_file: Path, output_dir: Path) -> List[Path]:
             emb_paths.extend(process_batch(labels, strs, output_dir, reps))
 
     return emb_paths
-
 
 
 # CLUSTERING AND GRAPH GENERATION
@@ -588,41 +587,48 @@ def hdf5_to_csv(hdf5_path: str) -> str:
     df.to_csv(out_csv, index=False)
     return str(out_csv)
 
+
 def ca_coords(pdb_file: Path, chain_id: str, max_resid=125) -> np.ndarray:
     coords = []
-    chains_seen = set()
+    residue_index = 0
 
     with open(pdb_file, "r") as f:
         for line in f:
             if not line.startswith("ATOM"):
                 continue
+
             atom_name = line[12:16].strip()
             chain = line[21].strip()
-            chains_seen.add(chain)
+
             if chain != chain_id or atom_name != "CA":
                 continue
-            resid_str = line[22:26].strip()
-            if not resid_str.isdigit():
-                continue
-            resid = int(resid_str)
-            if resid > max_resid:
-                continue
+
+            # use sequential index instead of PDB residue number
+            if residue_index > max_resid:
+                break
+
             x = float(line[30:38])
             y = float(line[38:46])
             z = float(line[46:54])
+
             coords.append([x, y, z])
+            residue_index += 1
 
     coords_arr = np.array(coords, dtype=float)
-    # Ensure shape is (n, 3), even if empty
+
     if coords_arr.size == 0:
         coords_arr = coords_arr.reshape((0, 3))
 
     return coords_arr
 
+
 # ===============================================================
 # LOW-CONTACT FLAG FOR ANTIBODIES
 
-def flag_low_contacts(pdb_file: Path, heavy_chain_id, light_chain_id, threshold=15):
+
+def flag_low_contacts(
+    pdb_file: Path, heavy_chain_id: str, light_chain_id: str, threshold: int = 15
+):
     """
     Flag ONLY if:
       - both heavy (H) and light (L) chains are present
@@ -633,19 +639,28 @@ def flag_low_contacts(pdb_file: Path, heavy_chain_id, light_chain_id, threshold=
 
     coords_H = ca_coords(pdb_file, heavy_chain_id, max_resid=125)  # VH
     coords_L = ca_coords(pdb_file, light_chain_id, max_resid=115)  # VL
-    # Compute contacts
-    dists = np.linalg.norm(coords_H[:, None, :] - coords_L[None, :, :], axis=-1)
-    n_contacts = np.sum(dists < 8.0)
 
+    # If either chain is missing, do not flag
+    if coords_H.shape[0] == 0 or coords_L.shape[0] == 0:
+        return False
+
+    # Compute pairwise CA distances
+    dists = np.linalg.norm(coords_H[:, None, :] - coords_L[None, :, :], axis=-1)
+
+    n_contacts = int(np.sum(dists < 8.0))
 
     if n_contacts < threshold:
-        log.warning(f"[FLAG] LOW H-L CONTACTS → {pdb_file.name}")
+        log.warning(
+            f"[FLAG] LOW H-L CONTACTS → {pdb_file.name} with {n_contacts} contacts"
+        )
         return True
 
     return False
 
-def parse_output(csv_output: str, original_pdb_dir: Path,
-                 heavy_chain_id=None, light_chain_id=None) -> None:
+
+def parse_output(
+    csv_output: str, original_pdb_dir: Path, heavy_chain_id=None, light_chain_id=None
+) -> None:
     """
     Add quality flags based on ORIGINAL PDBs (before merging).
     Skips check if either H or L chain is missing (valid nanobody or single-chain antibody),
@@ -660,25 +675,25 @@ def parse_output(csv_output: str, original_pdb_dir: Path,
         # find matching original PDB
         matches = list(original_pdb_dir.glob(f"{pdb_id}*.pdb"))
 
-
         pdb_file = matches[0]
 
         # Skip contact check if H or L is missing
-        if not heavy_chain_id or not light_chain_id or heavy_chain_id == '-' or light_chain_id == '-':
+        if (
+            not heavy_chain_id
+            or not light_chain_id
+            or heavy_chain_id == "-"
+            or light_chain_id == "-"
+        ):
             flags.append("not_applicable")  # mark explicitly
             continue
 
         # Perform low-contact check
-        is_bad = flag_low_contacts(
-            pdb_file,
-            heavy_chain_id,
-            light_chain_id
-        )
+        is_bad = flag_low_contacts(pdb_file, heavy_chain_id, light_chain_id)
 
         if is_bad:
             flags.append("low_HL_contacts")
         else:
-            flags.append("")
+            flags.append("ok")
 
     df["quality_flag"] = flags
 
@@ -711,7 +726,6 @@ def main():
     copied = work / pdb_file.name
     shutil.copy(pdb_file, copied)
 
-
     split_dir = work / "original_models"
     split_dir.mkdir(exist_ok=True)
 
@@ -725,7 +739,7 @@ def main():
     processed_dir.mkdir(exist_ok=True)
 
     # ============================================================
-    # Build merged PDBs + embeddings 
+    # Build merged PDBs + embeddings
     # ============================================================
     fasta_annot = None
     embed_dir = processed_dir / "embeddings"
@@ -798,12 +812,7 @@ def main():
     # ============================================================
     # contact check
     # ============================================================
-    parse_output(
-        csv_out,
-        split_dir, 
-        heavy_chain_id=HID,
-        light_chain_id=LID
-    )
+    parse_output(csv_out, split_dir, heavy_chain_id=HID, light_chain_id=LID)
 
 
 if __name__ == "__main__":
