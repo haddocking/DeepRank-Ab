@@ -12,7 +12,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import h5py
 import pandas as pd
@@ -20,12 +20,17 @@ import requests
 import torch
 from Bio.PDB import PDBParser, PDBIO
 from esm import FastaBatchedDataset, pretrained
-import numpy as np  # Added for contact counting
+import numpy as np
+from anarci import anarci
 
 # Add project root
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+BASE = Path(__file__).resolve().parents[1]  # DeepRank-Ab/
+hmmscan_path = BASE / "src" / "tools" / "ANARCI" 
+
 
 # Local modules
 from src.DataSet import HDF5DataSet, PreCluster
@@ -81,8 +86,9 @@ handler.setFormatter(logging.Formatter(" [%(levelname)s] %(message)s"))
 log.addHandler(handler)
 
 
+# ===============================================================
 # HELPERS
-
+# ===============================================================
 
 def _norm_chain(x: Optional[str]) -> Optional[str]:
     """Normalize chain ID args. Treat '-', 'none', 'null' etc. as missing."""
@@ -103,7 +109,10 @@ def clamp_cores(requested: int, task_count: int) -> int:
     return max(1, min(requested, avail, task_count))
 
 
+# ===============================================================
 # WORKSPACE SETUP
+# ===============================================================
+
 def setup_workspace(identificator: str) -> Path:
     workspace = Path.cwd() / identificator
     workspace.mkdir(parents=True, exist_ok=True)
@@ -111,51 +120,158 @@ def setup_workspace(identificator: str) -> Path:
     return workspace
 
 
+# ===============================================================
+# CHAIN AUTO-DETECTION
+# ===============================================================
+def detect_chains_anarci(pdb_file: Path) -> Tuple[str, Optional[str], str]:
+    parser = PDBParser(QUIET=True)
+    structure = parser.get_structure("model", pdb_file)
+    model = next(structure.get_models())
+    mapping = three_to_one()
+
+    heavy_chains: List[str] = []
+    light_chains: List[str] = []
+    antigen_chains: List[str] = []
+
+    for chain in model.get_chains():
+        seq = "".join(mapping.get(r.get_resname(), "X") for r in chain.get_residues())
+
+        if len(seq) < 10:
+            antigen_chains.append(chain.id)
+            continue
+
+        results, _, details = anarci(
+            [(chain.id, seq)],
+            scheme="imgt",
+            assign_germline=True,
+            hmmerpath=hmmscan_path,
+        )
+
+        hit = results[0]      # hits for this sequence
+        det = details[0]      # detail dicts for this sequence
+
+
+        if hit is None or all(h is None for h in hit):
+            antigen_chains.append(chain.id)
+        else:
+            # details[0] is a list of dicts, one per domain hit
+            chain_type = det[1][0][-1]
+            if chain_type == "H":
+                heavy_chains.append(chain.id)
+            elif chain_type in ("L", "K"):
+                light_chains.append(chain.id)
+            else:
+                antigen_chains.append(chain.id)
+
+        log.info(f"Chain {chain.id}: ANARCI chain_type = {chain_type} if hit and det else 'no hit'")
+
+
+    log.info(
+        f"ANARCI detected → heavy={heavy_chains}, light={light_chains}, "
+        f"antigen={antigen_chains}"
+    )
+
+    if not heavy_chains:
+        raise ValueError(
+            f"No heavy chain detected by ANARCI in {pdb_file.name}. "
+            f"Chains present: {[c.id for c in model.get_chains()]}. "
+            f"Pass --heavy_chain_id manually if needed."
+        )
+    if not antigen_chains:
+        raise ValueError(
+            f"No antigen chain detected in {pdb_file.name} (all chains matched as "
+            f"antibody). Pass --antigen_chain_id manually if needed."
+        )
+
+    if len(heavy_chains) > 1:
+        log.warning(
+            f"Multiple heavy chains detected {heavy_chains}, using '{heavy_chains[0]}'"
+        )
+    if len(light_chains) > 1:
+        log.warning(
+            f"Multiple light chains detected {light_chains}, using '{light_chains[0]}'"
+        )
+    if len(antigen_chains) > 1:
+        log.warning(
+            f"Multiple antigen chains detected {antigen_chains}, "
+            f"using '{antigen_chains[0]}'"
+        )
+
+    return (
+        heavy_chains[0],
+        light_chains[0] if light_chains else None,
+        antigen_chains[0],
+    )
+
+
+# ===============================================================
 # PDB PROCESSING
+# ===============================================================
+
 def split_input_pdb(pdb_file: Path, out_dir: Path) -> List[Path]:
+    """
+    Split an ensemble PDB into separate model PDB files
+    while preserving REMARK model names.
+
+    Example REMARK:
+        REMARK  4      MODEL     0 FROM Target319/055a74d834b0b51a855178676f0f16f2.pdb
+
+    Output:
+        055a74d834b0b51a855178676f0f16f2.pdb
+    """
     parser = PDBParser(QUIET=True)
     structure = parser.get_structure("structure", pdb_file)
 
     out_dir.mkdir(exist_ok=True)
 
-    io = PDBIO()
-    saved: List[Path] = []
+    # map: model index -> original model name
+    model_remarks = {}
+    with open(pdb_file, "r") as f:
+        for line in f:
+            if "REMARK" in line and "MODEL" in line:
+                parts = line.split()
+                try:
+                    ensemble_model_id = int(parts[3])
+                    original_name = parts[-1].split("/")[-1]
+                    original_name = original_name.replace(".pdb", "")
+                    model_remarks[ensemble_model_id] = {
+                        "remark": line.strip(),
+                        "name": original_name,
+                    }
+                except Exception as e:
+                    print(f"[WARN] failed parsing line:\n{line}\n{e}")
 
-    is_ensemble = len(list(structure)) > 1
+    io = PDBIO()
+    saved = []
 
     for model in structure:
-        model_id = model.id if is_ensemble else 0
-        out = out_dir / f"{pdb_file.stem}_model_{model_id}.pdb"
+        model_id = model.id
+        if model_id in model_remarks:
+            model_name = model_remarks[model_id]["name"]
+        else:
+            model_name = f"model_{model_id}"
+        out = out_dir / f"{model_name}.pdb"
         io.set_structure(model)
         io.save(str(out))
+
+        if model_id in model_remarks:
+            with open(out, "r") as f:
+                pdb_text = f.read()
+            with open(out, "w") as f:
+                f.write(model_remarks[model_id]["remark"] + "\n")
+                f.write(pdb_text)
         saved.append(out)
 
-    log.info(f"Split PDB into {len(saved)} model(s)")
+    print(f"Split PDB into {len(saved)} model(s)")
     return saved
 
 
 def three_to_one() -> dict:
     return {
-        "ALA": "A",
-        "ARG": "R",
-        "ASN": "N",
-        "ASP": "D",
-        "CYS": "C",
-        "GLN": "Q",
-        "GLU": "E",
-        "GLY": "G",
-        "HIS": "H",
-        "ILE": "I",
-        "LEU": "L",
-        "LYS": "K",
-        "MET": "M",
-        "PHE": "F",
-        "PRO": "P",
-        "SER": "S",
-        "THR": "T",
-        "TRP": "W",
-        "TYR": "Y",
-        "VAL": "V",
+        "ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C",
+        "GLN": "Q", "GLU": "E", "GLY": "G", "HIS": "H", "ILE": "I",
+        "LEU": "L", "LYS": "K", "MET": "M", "PHE": "F", "PRO": "P",
+        "SER": "S", "THR": "T", "TRP": "W", "TYR": "Y", "VAL": "V",
     }
 
 
@@ -170,7 +286,6 @@ def get_chain_sequence(structure, chain_id: Optional[str]) -> str:
     mapping = three_to_one()
     seq = []
     for res in chain:
-        # include only standard residues (best-effort; unknowns become X)
         seq.append(mapping.get(res.get_resname(), "X"))
     return "".join(seq)
 
@@ -184,8 +299,6 @@ def create_merged_pdb(
     Output contains:
       - antibody (heavy + optional light) in chain 'A'
       - antigen in chain 'B'
-
-    This avoids Biopython ValueErrors by never renaming/renumbering entities in place.
     """
     parser = PDBParser(QUIET=True)
     s0 = parser.get_structure("model", pdb_file)
@@ -215,8 +328,8 @@ def create_merged_pdb(
     m = Model(0)
     s.add(m)
 
-    chAb = Chain("A")  # merged antibody
-    chBg = Chain("B")  # antigen
+    chAb = Chain("A")
+    chBg = Chain("B")
     m.add(chAb)
     m.add(chBg)
 
@@ -235,7 +348,6 @@ def create_merged_pdb(
         for r0 in _sorted_res(src_chain):
             r = r0.copy()
             hetflag, _, _icode = r.id
-            # drop insertion codes for stability
             r.id = (hetflag, cur, " ")
             dst_chain.add(r)
             cur += 1
@@ -283,7 +395,6 @@ def convert_pdb_to_fastas(
     seq_L = get_chain_sequence(structure, LID)
     seq_Ag = get_chain_sequence(structure, AID)
 
-    # FASTA: annotation
     fasta_annot = fasta_outdir / f"{root}_HL.fasta"
     with open(fasta_annot, "w") as f:
         if seq_H:
@@ -291,7 +402,6 @@ def convert_pdb_to_fastas(
         if seq_L:
             f.write(f">{root}.L\n{seq_L}\n")
 
-    # FASTA: ESM (A=Ab merged, B=Ag)
     fasta_esm = fasta_outdir / f"{root}_merged_A_B.fasta"
     with open(fasta_esm, "w") as f:
         f.write(f">{root}.A\n{seq_H + seq_L}\n")
@@ -324,6 +434,10 @@ def preprocess_input_pdb(
 
     return merged_pdb, (fasta_annot, fasta_esm)
 
+
+# ===============================================================
+# ESM EMBEDDINGS
+# ===============================================================
 
 def calculate_checksum(path: str, algo="sha256") -> str:
     h = hashlib.new(algo)
@@ -434,7 +548,10 @@ def get_embedding(fasta_file: Path, output_dir: Path) -> List[Path]:
     return emb_paths
 
 
+# ===============================================================
 # CLUSTERING AND GRAPH GENERATION
+# ===============================================================
+
 def cluster(hdf5_path: str):
     dataset = HDF5DataSet(name="Train", root="./", database=hdf5_path)
     PreCluster(dataset, method="mcl")
@@ -491,24 +608,17 @@ def correct_json(work_dir: Path) -> Path:
 def add_embedding(work_dir: Path, hdf5_path: str):
     """
     Add ESM embedding feature to each molecule in the graph HDF5.
-
-    Embedding files are expected at:
-      {work_dir}/processed/embeddings/{mol}.{chain}.pt
-    where mol is the molecule name used by GraphHDF5,
-    and chain is 'A' or 'B' (merged antibody/antigen chains).
     """
     base = work_dir / "processed" / "embeddings"
 
     def _resolve_pt(mol_name: str, chain: str) -> Path:
         candidates = [mol_name, mol_name.replace(".pdb", ""), mol_name.split("/")[-1]]
-        # also strip common suffixes if present
         if candidates[0].endswith("_graph"):
             candidates.append(candidates[0].removesuffix("_graph"))
         for cand in candidates:
             pt = base / f"{cand}.{chain}.pt"
             if pt.is_file():
                 return pt
-        # last resort: try exact mol_name as stem-ish
         pt = base / f"{Path(mol_name).stem}.{chain}.pt"
         return pt
 
@@ -527,11 +637,11 @@ def add_embedding(work_dir: Path, hdf5_path: str):
                     )
 
                 data = torch.load(pt, map_location="cpu")
-                # Your config uses REPR_LAYERS=[33] and INCLUDE includes per_tok
                 vecs = data["representations"][33]
                 if idx < 1 or idx > vecs.shape[0]:
                     raise IndexError(
-                        f"Residue index out of bounds for {pt}: idx={idx}, len={vecs.shape[0]}"
+                        f"Residue index out of bounds for {pt}: idx={idx}, "
+                        f"len={vecs.shape[0]}"
                     )
                 emb[i] = vecs[idx - 1].mean()
 
@@ -543,7 +653,10 @@ def add_embedding(work_dir: Path, hdf5_path: str):
     log.info(f"Added embeddings → {hdf5_path}")
 
 
+# ===============================================================
 # MODEL EVALUATION
+# ===============================================================
+
 def deeprank_evaluate_model(
     target_name: str,
     hdf5_test: str,
@@ -603,7 +716,6 @@ def ca_coords(pdb_file: Path, chain_id: str, max_resid=125) -> np.ndarray:
             if chain != chain_id or atom_name != "CA":
                 continue
 
-            # use sequential index instead of PDB residue number
             if residue_index > max_resid:
                 break
 
@@ -624,7 +736,7 @@ def ca_coords(pdb_file: Path, chain_id: str, max_resid=125) -> np.ndarray:
 
 # ===============================================================
 # LOW-CONTACT FLAG FOR ANTIBODIES
-
+# ===============================================================
 
 def flag_low_contacts(
     pdb_file: Path, heavy_chain_id: str, light_chain_id: str, threshold: int = 15
@@ -636,17 +748,13 @@ def flag_low_contacts(
 
     If one is missing → do NOT flag (valid case)
     """
+    coords_H = ca_coords(pdb_file, heavy_chain_id, max_resid=125)
+    coords_L = ca_coords(pdb_file, light_chain_id, max_resid=115)
 
-    coords_H = ca_coords(pdb_file, heavy_chain_id, max_resid=125)  # VH
-    coords_L = ca_coords(pdb_file, light_chain_id, max_resid=115)  # VL
-
-    # If either chain is missing, do not flag
     if coords_H.shape[0] == 0 or coords_L.shape[0] == 0:
         return False
 
-    # Compute pairwise CA distances
     dists = np.linalg.norm(coords_H[:, None, :] - coords_L[None, :, :], axis=-1)
-
     n_contacts = int(np.sum(dists < 8.0))
 
     if n_contacts < threshold:
@@ -672,31 +780,17 @@ def parse_output(
     flags = []
 
     for pdb_id in df["pdb_id"]:
-        # find matching original PDB
         matches = list(original_pdb_dir.glob(f"{pdb_id}*.pdb"))
-
         pdb_file = matches[0]
 
-        # Skip contact check if H or L is missing
-        if (
-            not heavy_chain_id
-            or not light_chain_id
-            or heavy_chain_id == "-"
-            or light_chain_id == "-"
-        ):
-            flags.append("not_applicable")  # mark explicitly
+        if not heavy_chain_id or not light_chain_id:
+            flags.append("not_applicable")
             continue
 
-        # Perform low-contact check
         is_bad = flag_low_contacts(pdb_file, heavy_chain_id, light_chain_id)
-
-        if is_bad:
-            flags.append("low_HL_contacts")
-        else:
-            flags.append("ok")
+        flags.append("low_HL_contacts" if is_bad else "ok")
 
     df["quality_flag"] = flags
-
     df = df.sort_values(by="predicted_dockq", ascending=False)
     df.to_csv(csv_output, index=False)
 
@@ -706,20 +800,66 @@ def parse_output(
 # ===============================================================
 # MAIN PIPELINE
 # ===============================================================
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("pdb_file")
-    parser.add_argument("heavy_chain_id")
-    parser.add_argument("light_chain_id")
-    parser.add_argument("antigen_chain_id")
+    parser = argparse.ArgumentParser(
+        description="DeepRank-Ab inference pipeline. Chain IDs are auto-detected via "
+                    "ANARCI when not provided."
+    )
+    parser.add_argument("pdb_file", help="Input PDB file (single model or ensemble)")
+    parser.add_argument(
+        "--heavy_chain_id",
+        default=None,
+        help="Heavy chain ID (auto-detected via ANARCI if omitted)",
+    )
+    parser.add_argument(
+        "--light_chain_id",
+        default=None,
+        help="Light chain ID (auto-detected via ANARCI if omitted; "
+             "pass '-' to explicitly indicate a nanobody/VHH)",
+    )
+    parser.add_argument(
+        "--antigen_chain_id",
+        default=None,
+        help="Antigen chain ID (auto-detected via ANARCI if omitted)",
+    )
     args = parser.parse_args()
 
     pdb_file = Path(args.pdb_file)
-    HID = args.heavy_chain_id
-    LID = args.light_chain_id
-    AID = args.antigen_chain_id
 
-    identificator = f"{pdb_file.stem}-deeprank_ab_pred_{HID}{LID}_{AID}"
+    # ------------------------------------------------------------------
+    # Resolve chain IDs: manual override takes priority, ANARCI as fallback
+    # ------------------------------------------------------------------
+    manual_heavy = _norm_chain(args.heavy_chain_id)
+    manual_light = _norm_chain(args.light_chain_id)
+    manual_antigen = _norm_chain(args.antigen_chain_id)
+
+    if manual_heavy and manual_antigen:
+        # Both essential chains provided manually — use as-is
+        HID = manual_heavy
+        LID = manual_light  # may be None (nanobody)
+        AID = manual_antigen
+        log.info(f"Using manually specified chains → H={HID}, L={LID}, Ag={AID}")
+    else:
+        # Auto-detect with ANARCI (runs on first model only; chain IDs are
+        # consistent across all models in a standard ensemble)
+        log.info("Chain IDs not fully specified — running ANARCI auto-detection...")
+        HID, LID, AID = detect_chains_anarci(pdb_file)
+        # Allow a manual override to win over auto-detection for any single chain
+        if manual_heavy:
+            log.info(f"Overriding auto-detected heavy chain with --heavy_chain_id={manual_heavy}")
+            HID = manual_heavy
+        if args.light_chain_id is not None:  # explicit '-' means "no light chain"
+            log.info(f"Overriding auto-detected light chain with --light_chain_id={manual_light}")
+            LID = manual_light
+        if manual_antigen:
+            log.info(f"Overriding auto-detected antigen chain with --antigen_chain_id={manual_antigen}")
+            AID = manual_antigen
+        log.info(f"Final chains → H={HID}, L={LID}, Ag={AID}")
+
+    # Workspace name encodes chain assignment for traceability
+    lid_tag = LID if LID else "nb"  # 'nb' = nanobody / no light chain
+    identificator = f"{pdb_file.stem}-deeprank_ab_pred_{HID}{lid_tag}_{AID}"
     work = setup_workspace(identificator)
 
     # Copy PDB
@@ -731,7 +871,6 @@ def main():
 
     pdb_models = split_input_pdb(copied, split_dir)
 
-    # Choose cores sensibly
     avail = os.cpu_count() or 1
     cores = max(1, min(MAX_cores, avail))
 
@@ -778,6 +917,10 @@ def main():
     # ============================================================
     pdbs_for_graph = sorted(processed_dir.glob("*.pdb"))
     n_cores_graph = clamp_cores(cores, len(pdbs_for_graph))
+    log.info(
+        f"Using {n_cores_graph} cores for graph generation of "
+        f"{len(pdbs_for_graph)} models."
+    )
 
     graph_out = work / f"{identificator}_graph.hdf5"
 
@@ -810,7 +953,7 @@ def main():
     csv_out = hdf5_to_csv(str(pred_h5))
 
     # ============================================================
-    # contact check
+    # Contact check
     # ============================================================
     parse_output(csv_out, split_dir, heavy_chain_id=HID, light_chain_id=LID)
 
