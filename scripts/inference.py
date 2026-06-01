@@ -3,6 +3,18 @@
 DeepRank-Ab Inference Pipeline
 """
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="An issue occurred while importing 'pyg-lib'"
+)
+warnings.filterwarnings(
+    "ignore",
+    message="An issue occurred while importing 'torch-sparse'"
+)
+
+
 import argparse
 import hashlib
 import json
@@ -66,7 +78,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 TOKS_PER_BATCH = 4096
 REPR_LAYERS = [33]
 TRUNCATION_SEQ_LENGTH = 2500
-INCLUDE = ["mean", "per_tok"]
+INCLUDE = ["per_tok"] 
 
 MAX_cores = 50
 BATCH_SIZE = 64
@@ -80,10 +92,8 @@ NODE_FEATURES = ["atom_type", "polarity", "bsa", "region", "embedding"]
 EDGE_FEATURES = ["voro_area", "covalent", "vdw", "orientation"]
 
 ESM_MODEL = "esm2_t33_650M_UR50D"
-EXPECTED_CHECKSUMS = [
-    "ea9d0522b335a8778dea6535a65301f10208dece28cd5865482b0b1fc446168c",
-    "8ffe6edbd4173dc8d45c2cd5cb27d43aad77ec26b4c768200c58ae1f96693575",
-]
+EXPECTED_CHECKSUMS = "ea9d0522b335a8778dea6535a65301f10208dece28cd5865482b0b1fc446168c"
+
 
 # Logging
 log = logging.getLogger("DeepRankAB")
@@ -164,10 +174,10 @@ def merge_antigen_chains(
     for chain in non_antigen_chains:
         if chain.id == "B":
             new_id = _free_chain_id(occupied_ids)
-            log.info(
-                f"Non-antigen chain 'B' conflicts with merged antigen target -- "
-                f"remapping to '{new_id}'"
-            )
+            # log.info(
+            #     f"Non-antigen chain 'B' conflicts with merged antigen target -- "
+            #     f"remapping to '{new_id}'"
+            # )
             remap[chain.id] = new_id
             occupied_ids.add(new_id)
 
@@ -191,7 +201,7 @@ def merge_antigen_chains(
     all_chain_ids = {c.id for c in m0.get_chains()}
     for i, cid in enumerate(antigen_chain_ids):
         if cid not in all_chain_ids:
-            log.warning(f"Antigen chain '{cid}' not found in {pdb_file.name}, skipping.")
+            #log.warning(f"Antigen chain '{cid}' not found in {pdb_file.name}, skipping.")
             continue
 
         src = m0[cid]
@@ -209,14 +219,14 @@ def merge_antigen_chains(
         if i < len(antigen_chain_ids) - 1:
             cur_resseq += chain_gap
 
-        log.info(f"  Chain '{cid}': {len(residues)} residues merged into 'B'")
+        #log.info(f"  Chain '{cid}': {len(residues)} residues merged into 'B'")
 
     output_pdb.parent.mkdir(parents=True, exist_ok=True)
     io = PDBIO()
     io.set_structure(s)
     io.save(str(output_pdb))
 
-    log.info(f"Merged antigen PDB -> {output_pdb}")
+    #log.info(f"Merged antigen PDB -> {output_pdb}")
     return output_pdb, remap
 
 
@@ -417,7 +427,7 @@ def split_input_pdb(pdb_file: Path, out_dir: Path) -> List[Path]:
                 fh.write(remark + "\n")
             fh.writelines(current_lines)
         saved.append(out_path)
-        log.info(f"Saved model {current_model_idx} -> {out_path.name}")
+        #log.info(f"Saved model {current_model_idx} -> {out_path.name}")
  
     with open(pdb_file, "r") as f:
         for line in f:
@@ -587,7 +597,7 @@ def convert_pdb_to_fastas(
         f.write(f">{root}.A\n{seq_H + seq_L}\n")
         f.write(f">{root}.B\n{seq_Ag}\n")
 
-    log.info(f"FASTA files created for {pdb_file.name}")
+    #log.info(f"FASTA files create for {pdb_file.name}")
     return fasta_annot, fasta_esm
 
 
@@ -642,13 +652,7 @@ def fetch_weights() -> str:
             "WEIGHT_PATH",
             f"{ESM_MODEL}.pt",
             f"https://dl.fbaipublicfiles.com/fair-esm/models/{ESM_MODEL}.pt",
-            EXPECTED_CHECKSUMS[0],
-        ),
-        (
-            "REG_WEIGHT_PATH",
-            f"{ESM_MODEL}-contact-regression.pt",
-            f"https://dl.fbaipublicfiles.com/fair-esm/regression/{ESM_MODEL}-contact-regression.pt",
-            EXPECTED_CHECKSUMS[1],
+            EXPECTED_CHECKSUMS,
         ),
     ]
 
@@ -680,11 +684,6 @@ def process_batch(labels, strs, outdir, representations):
                 l: t[i, 1 : trunc + 1].clone() for l, t in representations.items()
             }
 
-        if "mean" in INCLUDE:
-            data["mean_representations"] = {
-                l: t[i, 1 : trunc + 1].mean(0).clone()
-                for l, t in representations.items()
-            }
 
         outpath = outdir / f"{label}.pt"
         torch.save(data, outpath)
@@ -726,6 +725,120 @@ def get_embedding(fasta_file: Path, output_dir: Path) -> List[Path]:
             emb_paths.extend(process_batch(labels, strs, output_dir, reps))
 
     return emb_paths
+
+
+def _read_fasta_sequences(fasta_file: Path) -> Dict[str, str]:
+    """Parse a FASTA file and return {label: sequence} dict."""
+    seqs: Dict[str, str] = {}
+    current_label = None
+    current_seq: List[str] = []
+
+    with open(fasta_file) as fh:
+        for line in fh:
+            line = line.strip()
+            if line.startswith(">"):
+                if current_label is not None:
+                    seqs[current_label] = "".join(current_seq)
+                current_label = line[1:]
+                current_seq = []
+            elif line:
+                current_seq.append(line)
+
+    if current_label is not None:
+        seqs[current_label] = "".join(current_seq)
+
+    return seqs
+
+
+def get_embeddings_dedup(
+    esm_fasta_files: List[Path],
+    output_dir: Path,
+) -> None:
+    """
+    Compute ESM embeddings for all sequences across the ensemble,
+    deduplicating by sequence content so each unique sequence is
+    embedded exactly once. Outputs are written as:
+
+        <output_dir>/<label>.pt
+
+    where <label> is the FASTA header (e.g. "model_001.A").
+    Duplicate sequences share the same .pt file via a symlink (or
+    copy on platforms that don't support symlinks).
+
+    Steps:
+      1. Collect all (label, sequence) pairs from every ESM FASTA.
+      2. Group labels by sequence hash → find unique sequences.
+      3. Write a single deduplicated FASTA and run get_embedding once.
+      4. For every label whose sequence was a duplicate, point its
+         expected output path at the canonical label's .pt file.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---- 1. Collect all (label, seq) pairs ----
+    # label format in ESM fastas: "<stem>.<chain>"  e.g. "model_001.A"
+    all_pairs: List[Tuple[str, str]] = []
+    for fasta in esm_fasta_files:
+        for label, seq in _read_fasta_sequences(fasta).items():
+            all_pairs.append((label, seq))
+
+    if not all_pairs:
+        raise RuntimeError("No sequences found in any ESM FASTA file.")
+
+    # ---- 2. Group by sequence → {seq_hash: [label, ...]} ----
+    hash_to_labels: Dict[str, List[str]] = {}
+    hash_to_seq: Dict[str, str] = {}
+
+    for label, seq in all_pairs:
+        seq_hash = hashlib.md5(seq.encode()).hexdigest()
+        hash_to_labels.setdefault(seq_hash, []).append(label)
+        hash_to_seq[seq_hash] = seq
+
+    n_total = len(all_pairs)
+    n_unique = len(hash_to_labels)
+    log.info(
+        f"ESM embedding deduplication: {n_total} sequences → "
+        f"{n_unique} unique ({n_total - n_unique} duplicates skipped)"
+    )
+
+    # ---- 3. Write deduplicated FASTA using the first label per hash ----
+    dedup_fasta = output_dir / "_dedup_sequences.fasta"
+    canonical_label: Dict[str, str] = {}  # seq_hash -> label used in dedup FASTA
+
+    with open(dedup_fasta, "w") as fh:
+        for seq_hash, labels in hash_to_labels.items():
+            canon = labels[0]
+            canonical_label[seq_hash] = canon
+            fh.write(f">{canon}\n{hash_to_seq[seq_hash]}\n")
+
+    # ---- 4. Run ESM on the deduplicated FASTA (single model load) ----
+    get_embedding(dedup_fasta, output_dir)
+
+    # ---- 5. For duplicate labels, symlink/copy from the canonical .pt ----
+    n_linked = 0
+    for seq_hash, labels in hash_to_labels.items():
+        canon = canonical_label[seq_hash]
+        canon_pt = output_dir / f"{canon}.pt"
+
+        for label in labels[1:]:          # skip the canonical one (already written)
+            dest_pt = output_dir / f"{label}.pt"
+            if dest_pt.exists() or dest_pt.is_symlink():
+                continue                  # already resolved from a previous run
+
+            try:
+                dest_pt.symlink_to(canon_pt.resolve())
+            except (OSError, NotImplementedError):
+                # Fallback for filesystems that don't support symlinks
+                shutil.copy2(canon_pt, dest_pt)
+                log.debug(f"Copied (symlink unsupported): {dest_pt.name}")
+            else:
+                log.debug(f"Symlinked duplicate: {dest_pt.name} -> {canon_pt.name}")
+
+            n_linked += 1
+
+    log.info(
+        f"Embeddings written: {n_unique} computed, "
+        f"{n_linked} duplicates resolved via symlink/copy."
+    )
 
 
 # ===============================================================
@@ -1104,11 +1217,11 @@ def main():
     # ============================================================
     if len(AID_list) > 1:
 
-        log.info(
-            f"Multiple antigen chains {AID_list} detected -- "
-            f"merging into chain 'B' for all "
-            f"{len(pdb_models)} models..."
-        )
+        # log.info(
+        #     f"Multiple antigen chains {AID_list} detected -- "
+        #     f"merging into chain 'B' for all "
+        #     f"{len(pdb_models)} models..."
+        # )
 
         merged_models = []
         remap: Dict[str, str] = {}
@@ -1131,17 +1244,17 @@ def main():
         AID = "B"
 
         if HID in remap:
-            log.info(
-                f"Heavy chain '{HID}' remapped "
-                f"to '{remap[HID]}'"
-            )
+            # log.info(
+            #     f"Heavy chain '{HID}' remapped "
+            #     f"to '{remap[HID]}'"
+            # )
             HID = remap[HID]
 
         if LID and LID in remap:
-            log.info(
-                f"Light chain '{LID}' remapped "
-                f"to '{remap[LID]}'"
-            )
+            # log.info(
+            #     f"Light chain '{LID}' remapped "
+            #     f"to '{remap[LID]}'"
+            # )
             LID = remap[LID]
 
     else:
@@ -1184,35 +1297,29 @@ def main():
     processed_dir.mkdir(exist_ok=True)
 
     # ============================================================
-    # 6. Build merged PDBs + embeddings
+    # 6. Build merged PDBs + deduplicated ESM embeddings
     # ============================================================
     fasta_annot = None
+    all_esm_fastas: List[Path] = []
 
     embed_dir = processed_dir / "embeddings"
     embed_dir.mkdir(exist_ok=True)
 
     for pdb in pdb_models:
-
-        _merged_pdb, (
-            fasta_annot,
-            fasta_esm
-        ) = preprocess_input_pdb(
+        _merged_pdb, (fasta_annot, fasta_esm) = preprocess_input_pdb(
             work,
             pdb,
             HID,
             LID,
             AID,
         )
-
-        get_embedding(
-            fasta_esm,
-            embed_dir,
-        )
+        all_esm_fastas.append(fasta_esm)
 
     if fasta_annot is None:
-        raise RuntimeError(
-            "No FASTA files were produced."
-        )
+        raise RuntimeError("No FASTA files were produced.")
+
+    # Compute embeddings once per unique sequence, then symlink duplicates
+    get_embeddings_dedup(all_esm_fastas, embed_dir)
 
     # ============================================================
     # 7. Annotation
