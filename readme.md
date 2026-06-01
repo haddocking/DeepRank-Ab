@@ -1,123 +1,146 @@
 # DeepRank-Ab Inference Pipeline
 
-DeepRank-Ab is a scoring function for ranking
-antibody-antigen docking models based on geometric deep learning.
+DeepRank-Ab is a geometric deep learning scoring function for ranking antibody–antigen docking models and predicting **DockQ scores**.
 
-
-📄 **Publication**\
+📄 Publication (preprint):  
 https://www.biorxiv.org/content/10.64898/2025.12.03.691974v1
 
-This repository provides the **full inference pipeline** for the model
-described in the paper.
+This repository provides a **fully automated inference pipeline** from raw PDB → DockQ prediction + quality flags.
 
-------------------------------------------------------------------------
+---
 
-## 🚀 Features
+## 🚀 Key Features
 
--   **PDB Processing**
-    -   Split ensemble models 
-    -   Extract chain sequences 
-    -   Merge chains for downstream analysis 
--   **FASTA Conversion**
-    -   Generate FASTA files for CDR annotation and ESM embeddings 
--   **ESM Embeddings**
-    -   Compute embeddings using `esm2_t33_650M_UR50D` 
--   **Graph Construction**
-    -   Build atom-level graphs with precomputed node and edge features 
--   **Prediction**
-    -   Inference with pretrained EGNN models and output predicted DockQ
+### 🧬 Fully Automated Structure Processing
+- Ensemble PDB splitting (MODEL/ENDMDL aware)
+- Automatic antibody/antigen chain detection via ANARCI
+- Heavy/light chain inference with fallback manual override
+- Multi-chain antigen merging into a single chain
 
-------------------------------------------------------------------------
+### 🧪 Feature Engineering Pipeline
+- FASTA generation (CDR + ESM formats)
+- ESM-2 embeddings (esm2_t33_650M_UR50D)
+- Atom-level graph construction (EGNN-ready)
+- CDR annotation via ANARCI
+- Region-aware graph features
+
+### 🧠 Deep Learning Inference
+- Pretrained EGNN model inference
+- DockQ regression output
+- Node + edge feature integration:
+  - Atom type, polarity, BSA, region, embeddings
+  - Voro area, covalent, VdW, orientation
+
+### ⚠️ Structural Quality Filtering
+- VdW clash detection (p01–p99 training bounds)
+- Heavy–light chain contact validation
+- Automatic quality flags in final CSV
+
+---
 
 ## 📦 Installation
 
-### 1. Clone the repository
-
-``` bash
+### 1. Clone repository
+```bash
 git clone https://github.com/haddocking/DeepRank-Ab
 cd DeepRank-Ab
 ```
 
-### 2. Create and activate the environment
-
-``` bash
+### 2. Environment setup
+```bash
 mamba env create -f environment-gpu.yml
 mamba activate deeprank-ab
 ```
 
 ### 3. Install ANARCI
-
-ANARCI is required for CDR annotation.
-
-Installation instructions:\
 https://github.com/oxpig/ANARCI
 
-*Note:* `hmmscan` is already included in the environment.\
-If you encounter issues, follow the workaround here:\
-https://github.com/oxpig/ANARCI/issues/102
+Ensure hmmscan is available.
 
-------------------------------------------------------------------------
+---
 
-## 🔧 Usage
+## ⚙️ Usage
 
-The inference pipeline is executed through:
-
-    DeepRank-Ab/scripts/inference.py
-
-### **Run the pipeline**
-
-``` bash
-python3 scripts/inference.py <pdb_file> <antibody_heavy_chain_id> <antibody_light_chain_id> <antigen_chain_id>
+### Basic command
+```bash
+python3 scripts/inference.py <pdb_file>
 ```
 
-### **Example**
-
-``` bash
-python3 scripts/inference.py example/test.pdb H L A
+### Example
+```bash
+python3 scripts/inference.py example/test.pdb
 ```
 
-This will:
-
--   Create a workspace
--   Generate ESM embeddings
--   Annotate CDRs
--   Build atom-level graphs
--   Cluster nodes
--   Predict DockQ scores
--   Save output files (`.csv` and `.hdf5`)
-
-------------------------------------------------------------------------
+---
 
 ## 🧬 Input Requirements
 
--   **PDB file**\
-    Antibody--antigen structure. Can be a single model or an ensemble.
+- PDB file (single model or ensemble supported)
+- Optional chain overrides:
+  - --heavy_chain_id
+  - --light_chain_id
+  - --antigen_chain_id
 
--   **Heavy chain ID**\
-    Example: `H`
+If not provided, chains are auto-detected via ANARCI.
 
--   **Light chain ID**\
-    Example: `L`
+---
 
--   **Antigen chain ID**\
-    Example: `A`
+## 🔗 Pipeline Overview
 
-------------------------------------------------------------------------
+1. Workspace creation
+2. PDB splitting
+3. Chain detection
+4. Antigen merging
+5. FASTA generation
+6. ESM embeddings
+7. CDR annotation
+8. Graph construction
+9. VdW clash filtering
+10. Clustering
+11. DockQ prediction
+12. CSV output
 
+---
 
-## ⚙️ Large-Scale Inference
+## 📊 Outputs
 
-We provide a helper script for running DeepRank-Ab on **large batches**
-of complexes. Adapt it to your dataset as needed. 
+- *_predictions.hdf5
+- *.csv
 
-Example:
+### CSV columns
+- pdb_id
+- predicted_dockq
+- HL_contact_flag
+- vdw_clash_flag
 
-``` bash
-python3 scripts/run_batch_inference.sh
-```
+---
 
-------------------------------------------------------------------------
+## ⚠️ Quality Flags
+
+HL contact:
+- ok
+- low_HL_contacts
+- not_applicable
+
+VdW clash:
+- ok
+- potential_clash
+
+---
+
+## 🧰 Dependencies
+
+- PyTorch
+- BioPython
+- h5py
+- pandas
+- numpy
+- esm
+- ANARCI
+- EGNN
+
+---
 
 ## 📫 Support
 
-For issues or questions, please open a GitHub issue.
+Open a GitHub issue for help.
