@@ -92,7 +92,10 @@ NODE_FEATURES = ["atom_type", "polarity", "bsa", "region", "embedding"]
 EDGE_FEATURES = ["voro_area", "covalent", "vdw", "orientation"]
 
 ESM_MODEL = "esm2_t33_650M_UR50D"
-EXPECTED_CHECKSUMS = "ea9d0522b335a8778dea6535a65301f10208dece28cd5865482b0b1fc446168c"
+EXPECTED_CHECKSUMS = [
+    "ea9d0522b335a8778dea6535a65301f10208dece28cd5865482b0b1fc446168c",
+    "8ffe6edbd4173dc8d45c2cd5cb27d43aad77ec26b4c768200c58ae1f96693575",
+]
 
 
 # Logging
@@ -646,13 +649,21 @@ def download_weights(url: str, dest: str) -> str:
     return dest
 
 
+
+
 def fetch_weights() -> str:
     models = [
         (
             "WEIGHT_PATH",
             f"{ESM_MODEL}.pt",
             f"https://dl.fbaipublicfiles.com/fair-esm/models/{ESM_MODEL}.pt",
-            EXPECTED_CHECKSUMS,
+            EXPECTED_CHECKSUMS[0],
+        ),
+        (
+            "REG_WEIGHT_PATH",
+            f"{ESM_MODEL}-contact-regression.pt",
+            f"https://dl.fbaipublicfiles.com/fair-esm/regression/{ESM_MODEL}-contact-regression.pt",
+            EXPECTED_CHECKSUMS[1],
         ),
     ]
 
