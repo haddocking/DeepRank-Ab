@@ -327,7 +327,7 @@ def detect_chains_anarci(pdb_file: Path) -> Tuple[str, Optional[str], str]:
             else:
                 antigen_chains.append(chain.id)
 
-        log.info(f"Chain {chain.id}: ANARCI chain_type = {chain_type} if hit and det else 'no hit'")
+            log.info(f"Chain {chain.id}: ANARCI chain_type = {chain_type} if hit and det else 'no hit'")
 
 
     log.info(
@@ -459,7 +459,7 @@ def split_input_pdb(pdb_file: Path, out_dir: Path) -> List[Path]:
     if current_lines and current_model_idx is not None:
         log.warning(f"Model {current_model_idx} has no ENDMDL — flushing anyway.")
         flush()
- 
+
     log.info(f"Split PDB into {len(saved)} model(s) -> {out_dir}")
     return saved
 
