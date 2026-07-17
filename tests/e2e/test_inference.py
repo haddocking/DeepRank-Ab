@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 TEST_PDB = REPO_ROOT / "example" / "test.pdb"
 
 
