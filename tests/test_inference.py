@@ -1,8 +1,8 @@
 """
-Smoke test for the end-to-end inference pipeline (scripts/inference.py).
+End-to-end test for the inference pipeline (scripts/inference.py).
 
-Runs the pipeline against example/test.pdb and checks that a prediction CSV
-with the expected columns is produced. Meant to run inside the Docker image
+Runs the pipeline against example/test.pdb and checks the prediction CSV's
+columns and exact regression value. Meant to run inside the Docker image
 (see Dockerfile) where all heavy dependencies (ANARCI, ESM, torch, pdb2sql,
 voronota, freesasa...) are installed.
 """
@@ -12,11 +12,13 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_PDB = REPO_ROOT / "example" / "test.pdb"
 
 
+@pytest.mark.e2e
 def test_inference_smoke(tmp_path):
     result = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "inference.py"), str(TEST_PDB)],
@@ -44,3 +46,13 @@ def test_inference_smoke(tmp_path):
         assert col in df.columns
     # and at least one scored model
     assert len(df) >= 1
+
+    row = df.iloc[0]
+    # pdb_id matches the input stem (test.pdb -> "test")
+    assert row["pdb_id"] == "test"
+    # regression check: known-good prediction for this fixture is ~0.797;
+    # allow some drift (nondeterministic dedup/ordering, lib version differences)
+    assert row["predicted_dockq"] == pytest.approx(0.797, abs=0.05)
+    # quality flags are one of the documented enum values
+    assert row["HL_contact_flag"] in ("ok", "low_HL_contacts", "not_applicable")
+    assert row["vdw_clash_flag"] in ("ok", "potential_clash")
