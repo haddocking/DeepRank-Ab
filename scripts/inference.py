@@ -32,7 +32,6 @@ import torch
 from Bio.PDB import PDBParser, PDBIO
 from esm import FastaBatchedDataset, pretrained
 import numpy as np
-from anarci import anarci
 
 # Add project root
 import sys
@@ -40,7 +39,12 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 BASE = Path(__file__).resolve().parents[1]  # DeepRank-Ab/
-hmmscan_path = BASE / "src" / "tools" / "ANARCI" 
+hmmscan_path = BASE / "src" / "tools" / "ANARCI"
+
+# vendored anarci package (its setup.py is incompatible with modern pip/wheel builds);
+# ships its own germline HMM database under anarci/dat/
+sys.path.insert(0, str(hmmscan_path))
+from anarci import anarci
 
 
 # Local modules

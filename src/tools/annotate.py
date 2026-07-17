@@ -1,4 +1,5 @@
 import json
+import sys
 import warnings
 from pathlib import Path
 from multiprocessing import Pool
@@ -6,18 +7,38 @@ import os
 
 from Bio.PDB import PDBParser
 from Bio import SeqIO, pairwise2
-from anarci import anarci
 
 BASE = Path(__file__).resolve().parent
 hmmscan_path = BASE / "ANARCI"
 
+# vendored anarci package (its setup.py is incompatible with modern pip/wheel builds);
+# ships its own germline HMM database under anarci/dat/
+sys.path.insert(0, str(hmmscan_path))
+from anarci import anarci
+
 
 # residue code map (includes MSE -> M)
 THREE_TO_ONE = {
-    "ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C",
-    "GLU": "E", "GLN": "Q", "GLY": "G", "HIS": "H", "ILE": "I",
-    "LEU": "L", "LYS": "K", "MET": "M", "PHE": "F", "PRO": "P",
-    "SER": "S", "THR": "T", "TRP": "W", "TYR": "Y", "VAL": "V",
+    "ALA": "A",
+    "ARG": "R",
+    "ASN": "N",
+    "ASP": "D",
+    "CYS": "C",
+    "GLU": "E",
+    "GLN": "Q",
+    "GLY": "G",
+    "HIS": "H",
+    "ILE": "I",
+    "LEU": "L",
+    "LYS": "K",
+    "MET": "M",
+    "PHE": "F",
+    "PRO": "P",
+    "SER": "S",
+    "THR": "T",
+    "TRP": "W",
+    "TYR": "Y",
+    "VAL": "V",
     "MSE": "M",
 }
 
@@ -113,7 +134,9 @@ def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str =
     for rec in seqs:
         role = _norm_role_from_id(rec.id)
         if role not in ("H", "L"):
-            raise ValueError(f"{fasta_file}: unexpected record id '{rec.id}' (expected id ending with H or L)")
+            raise ValueError(
+                f"{fasta_file}: unexpected record id '{rec.id}' (expected id ending with H or L)"
+            )
         ref[role] = str(rec.seq).replace("\n", "").strip()
 
     if "H" not in ref or not ref["H"]:
@@ -128,12 +151,16 @@ def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str =
 
     all_chainids = [chain.id for chain in model0]
     if antigen_chainid not in all_chainids:
-        raise ValueError(f"{model_name}: antigen chain '{antigen_chainid}' not found (have {all_chainids})")
+        raise ValueError(
+            f"{model_name}: antigen chain '{antigen_chainid}' not found (have {all_chainids})"
+        )
 
     # antibody chain(s) = any chain not antigen
     chainid_antibody = [cid for cid in all_chainids if cid != antigen_chainid]
     if not chainid_antibody:
-        raise ValueError(f"{model_name}: no antibody chain found (only antigen '{antigen_chainid}' present?)")
+        raise ValueError(
+            f"{model_name}: no antibody chain found (only antigen '{antigen_chainid}' present?)"
+        )
 
     # In merged PDBs this should be a single chain (e.g. A), but keep first non-antigen chain.
     ab_cid = chainid_antibody[0]
@@ -146,7 +173,9 @@ def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str =
         while h0 > 0 and chainAb_seq[h0] != seqH[0]:
             h0 -= 1
         if h0 != orig_h0:
-            warnings.warn(f"{model_name}: heavy missing {orig_h0 - h0} N-term residues, shifting start")
+            warnings.warn(
+                f"{model_name}: heavy missing {orig_h0 - h0} N-term residues, shifting start"
+            )
     except RuntimeError as e:
         warnings.warn(str(e))
         return None
@@ -160,7 +189,9 @@ def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str =
             while l0 > 0 and chainAb_seq[l0] != seqL[0]:
                 l0 -= 1
             if l0 != orig_l0:
-                warnings.warn(f"{model_name}: light missing {orig_l0 - l0} N-term residues, shifting start")
+                warnings.warn(
+                    f"{model_name}: light missing {orig_l0 - l0} N-term residues, shifting start"
+                )
         except RuntimeError as e:
             warnings.warn(str(e))
             return None
@@ -174,11 +205,15 @@ def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str =
 
     if varH:
         records.append((f"{model_name}_H", varH))
-        mapping.append({"model": model_name, "chain": "H", "start": h0, "seq": chainAb_seq})
+        mapping.append(
+            {"model": model_name, "chain": "H", "start": h0, "seq": chainAb_seq}
+        )
 
     if varL and l0 is not None:
         records.append((f"{model_name}_L", varL))
-        mapping.append({"model": model_name, "chain": "L", "start": l0, "seq": chainAb_seq})
+        mapping.append(
+            {"model": model_name, "chain": "L", "start": l0, "seq": chainAb_seq}
+        )
 
     if not records:
         warnings.warn(f"{model_name}: no variable domains found")
@@ -196,7 +231,7 @@ def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str =
     annotations = {}
     for info, num in zip(mapping, numbering):
         model_key = f"{info['model']}.pdb"
-        chain_role = info["chain"]   # 'H' or 'L'
+        chain_role = info["chain"]  # 'H' or 'L'
         start = info["start"]
         seq = info["seq"]
 
@@ -211,7 +246,7 @@ def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str =
         region_fn = region_h if chain_role == "H" else region_l
 
         idx = start
-        for ((pos, _ins), aa) in aligned:
+        for (pos, _ins), aa in aligned:
             if aa == "-":
                 continue
 
@@ -227,7 +262,9 @@ def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str =
     return annotations
 
 
-def annotate_folder(folder: Path, output_dir: Path, fasta_file: Path = None, antigen_chainid: str = "A"):
+def annotate_folder(
+    folder: Path, output_dir: Path, fasta_file: Path = None, antigen_chainid: str = "A"
+):
     """
     Annotate all PDB files in a folder using a single fasta file.
     (Kept for backwards compatibility.)
@@ -355,4 +392,3 @@ def annotate_folder_one_by_one_mp_single_fasta(
         json.dump(all_annotations, f, indent=2)
 
     print(f"Annotations written to {out_file}")
-
