@@ -10,8 +10,7 @@ Preprint: https://www.biorxiv.org/content/10.64898/2025.12.03.691974v1
 ## Installation
 
 > [!NOTE]
-> **Linux only.** The vendored `hmmscan`/`voronota` binaries are x86-64 Linux ELF and won't run on
-? macOS. 
+> **Linux only.** The vendored `hmmscan`/`voronota` binaries are x86-64 Linux ELF and won't run on macOS. 
 >
 > On macOS, use Docker instead (see below).
 
