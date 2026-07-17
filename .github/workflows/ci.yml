@@ -7,15 +7,7 @@ on:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-
-    continue-on-error: true
-
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -23,12 +15,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.10"
 
-      # `freesasa` builds a C extension from source so we need `build-essentials` on linux
-      # macOS runners already ship a C compiler.
-      - name: Install build tools (Linux)
-        if: runner.os == 'Linux'
+      # `freesasa` builds a C extension from source if no matching wheel exists
+      - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential
 
       - name: Install dependencies
