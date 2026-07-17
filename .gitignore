@@ -16,6 +16,7 @@ venv/
 htmlcov/
 
 # AI coding assistant local state/caches
+CLAUDE.md
 .claude/
 .cursor/
 .cursorrules.local
