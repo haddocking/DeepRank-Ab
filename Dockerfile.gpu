@@ -5,12 +5,7 @@ FROM nvidia/cuda:${CUDA}-cudnn-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-  apt-get install -y --no-install-recommends \
-  build-essential \
-  python3-full \
-  python3-dev \
-  python3-pip \
-  && \
+  apt-get install -y --no-install-recommends build-essential && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/*
 
@@ -20,7 +15,7 @@ WORKDIR /app
 COPY . .
 RUN chmod +x src/tools/ANARCI/hmmscan src/tools/voronota/voronota
 
-RUN uv pip install --system .
+RUN uv venv --python 3.10 && uv pip install .
 
-ENTRYPOINT ["deeprank-ab-predict"]
+ENTRYPOINT ["uv", "run", "deeprank-ab-predict"]
 #==========================================================================#
