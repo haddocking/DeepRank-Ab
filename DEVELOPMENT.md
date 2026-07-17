@@ -8,8 +8,7 @@ cd deeprank-ab
 uv sync --extra dev   # or: pip install -e ".[dev]"
 ```
 
-This installs the project in editable mode plus `pytest`. See [CLAUDE.md](CLAUDE.md) for the
-pipeline architecture and things to watch for when editing.
+This installs the project in editable mode plus `pytest`. 
 
 ## Tests
 
