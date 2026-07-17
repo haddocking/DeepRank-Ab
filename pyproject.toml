@@ -66,4 +66,4 @@ packages = ["src", "scripts"]
 
 [tool.coverage.run]
 source = ["src", "scripts"]
-omit = ["tests/*"]
+omit = ["tests/*", "src/tools/ANARCI/*"]
