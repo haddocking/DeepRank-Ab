@@ -6,27 +6,33 @@ on:
   pull_request:
 
 jobs:
-  docker-test:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    continue-on-error: ${{ contains(fromJSON('["3.12", "3.13", "3.14"]'), matrix.python-version) }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Build image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
-          context: .
-          push: false
-          load: true
-          tags: deeprank-ab:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          python-version: ${{ matrix.python-version }}
+
+      # `freesasa` builds a C extension from source if no matching wheel exists.
+      # macOS runners already ship a C compiler via Xcode command line tools.
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
 
       - name: Run test suite
-        run: |
-          docker run --rm --entrypoint conda deeprank-ab:ci \
-            run --no-capture-output -n deeprank-ab \
-            pytest tests/ -v
+        run: pytest tests/ -v
