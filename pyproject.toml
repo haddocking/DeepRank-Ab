@@ -1,8 +1,8 @@
 [project]
-name = "DeepRank-Ab"
-version = "0.1.0"
+name = "deeprank-ab"
+version = "1.0.0"
 description = "Scoring function for antibody-antigen interactions"
-requires-python = ">=3.10"
+requires-python = "==3.10.*"
 authors = [{ name = "Xiaotong Xu", email = "x.xu1@uu.nl" }]
 maintainers = [
   { name = "Rodrigo V Honorato", email = "rvhonorato@pm.me" },
