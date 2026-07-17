@@ -2,6 +2,7 @@
 name = "DeepRank-Ab"
 version = "0.1.0"
 description = "Scoring function for antibody-antigen interactions"
+requires-python = ">=3.10"
 authors = [{ name = "Xiaotong Xu", email = "x.xu1@uu.nl" }]
 maintainers = [
   { name = "Rodrigo V Honorato", email = "rvhonorato@pm.me" },
@@ -48,6 +49,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 
+[project.scripts]
+deeprank-ab-predict = "scripts.inference:main"
+
 [tool.pytest.ini_options]
 markers = [
   "e2e: full pipeline run against a real PDB, checks exact regression values (slow)",
@@ -56,3 +60,7 @@ markers = [
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*", "scripts*"]
+namespaces = true
