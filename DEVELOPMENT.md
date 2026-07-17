@@ -16,9 +16,15 @@ This installs the project in editable mode plus `pytest`.
 uv run pytest tests/ -v   # or: pytest tests/ -v
 ```
 
-`tests/test_inference.py` is an end-to-end test (`e2e` marker) — it runs the full pipeline
-against `example/test.pdb` and checks the predicted DockQ value against a known-good regression
-target, not just that the pipeline doesn't crash.
+Tests are split into two folders:
+
+- `tests/unit/` — fast, deterministic tests for individual functions (no GPU, network, or
+  external binaries required).
+- `tests/e2e/test_inference.py` — an end-to-end test (`e2e` marker) that runs the full pipeline
+  against `example/test.pdb` and checks the predicted DockQ value against a known-good regression
+  target, not just that the pipeline doesn't crash.
+
+Run only the fast unit tests with `uv run pytest tests/unit -v` or `uv run pytest tests/ -v -m "not e2e"`.
 
 ## Docker
 
