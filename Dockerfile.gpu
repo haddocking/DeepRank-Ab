@@ -17,5 +17,5 @@ RUN chmod +x src/tools/ANARCI/hmmscan src/tools/voronota/voronota
 
 RUN uv venv --python 3.10 && uv pip install .
 
-ENTRYPOINT ["uv", "run", "deeprank-ab-predict"]
+ENTRYPOINT ["/app/.venv/bin/deeprank-ab-predict"]
 #==========================================================================#

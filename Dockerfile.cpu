@@ -18,5 +18,5 @@ RUN uv venv --python 3.10
 RUN uv pip install torch==2.0.1 --extra-index-url https://download.pytorch.org/whl/cpu && \
   uv pip install .
 
-ENTRYPOINT ["uv", "run", "deeprank-ab-predict"]
+ENTRYPOINT ["/app/.venv/bin/deeprank-ab-predict"]
 #==========================================================================#
