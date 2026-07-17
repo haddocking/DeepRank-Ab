@@ -47,7 +47,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pytest-cov", "coverage"]
 
 [project.scripts]
 deeprank-ab-predict = "scripts.inference:main"
@@ -63,3 +63,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src", "scripts"]
+
+[tool.coverage.run]
+source = ["src", "scripts"]
+omit = ["tests/*"]

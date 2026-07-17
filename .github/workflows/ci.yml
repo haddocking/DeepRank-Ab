@@ -8,6 +8,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -25,7 +27,18 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run test suite
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests/ -v --cov --cov-report=
+
+      - name: Generate coverage report
+        run: |
+          uv run coverage report
+          uv run coverage xml
+
+      - uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699 # v1
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: ./coverage.xml
 
   docker-build:
     runs-on: ubuntu-latest
