@@ -51,6 +51,7 @@ def get_preloaded_cluster(cluster, batch):
 # -----------------------------------------------------------------------------
 # Community detection
 # -----------------------------------------------------------------------------
+# TODO: function too complex, refactor
 def community_detection_per_batch(
     edge_index, batch, num_nodes, edge_attr=None, method="mcl"
 ):
@@ -139,6 +140,7 @@ def community_detection(edge_index, num_nodes, edge_attr=None, method="mcl"):
 # -----------------------------------------------------------------------------
 # Pooling by community
 # -----------------------------------------------------------------------------
+# TODO: function too complex, refactor
 def community_pooling(cluster, data):
     """Pool nodes/edges by community into a coarsened PyG graph.
 

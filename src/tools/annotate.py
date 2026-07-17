@@ -102,6 +102,7 @@ def _norm_role_from_id(rec_id: str) -> str:
     return rid[-1] if rid else ""
 
 
+# TODO: function too complex, refactor
 def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str = "A"):
     """
     Annotate CDR/FR/CONST for a single PDB using a reference fasta.
@@ -262,6 +263,7 @@ def annotate_single_pdb(fasta_file: Path, pdb_file: Path, antigen_chainid: str =
     return annotations
 
 
+# TODO: function too complex, refactor
 def annotate_folder(
     folder: Path, output_dir: Path, fasta_file: Path = None, antigen_chainid: str = "A"
 ):
@@ -305,6 +307,7 @@ def _annotate_single_wrapper(args):
         return None
 
 
+# TODO: function too complex, refactor
 def annotate_folder_one_by_one_mp(
     folder: Path,
     fasta_folder: Path,
@@ -356,6 +359,7 @@ def annotate_folder_one_by_one_mp(
     print(f"Annotations written to {out_file}")
 
 
+# TODO: function too complex, refactor
 def annotate_folder_one_by_one_mp_single_fasta(
     folder: Path,
     fasta_file_path: Path,

@@ -15,6 +15,7 @@ class AtomGraph(Graph):
     Nodes are residues; edges include interface and intra-chain contacts (both directions).
     Optional extras: PSSM alignment, region labels, edge orientations, contact features.
     """
+    # TODO: function too complex, refactor
     def __init__(
         self,
         pdb=None,
@@ -131,6 +132,7 @@ class AtomGraph(Graph):
         # close db
         db._close()
 
+    # TODO: function too complex, refactor
     def get_contact_atoms(
         self,
         db,
@@ -204,6 +206,7 @@ class AtomGraph(Graph):
 
         return contact_pairs
     
+    # TODO: function too complex, refactor
     def get_graph(self, db):
         """
         Build the directed residue graph:
@@ -241,6 +244,7 @@ class AtomGraph(Graph):
                 self.nx.add_edge(v, u, dist=d, type=bytes("internal", encoding="utf-8"))
 
 
+    # TODO: function too complex, refactor
     def get_node_features(self, db):
         """
         Compute per-node features: chain id, mean 3D position, type, charge,
@@ -300,6 +304,7 @@ class AtomGraph(Graph):
                     )
 
 
+    # TODO: function too complex, refactor
     def get_edge_features(self, db):
         """
         Add edge-level features:
@@ -343,6 +348,7 @@ class AtomGraph(Graph):
         add_residue_contacts_atomgraph(self, db)
     
 
+    # TODO: function too complex, refactor
     def _get_voro_contact_area(self, node1, node2):
         """
         Compute Voronota contact area between two atoms (nodes).
@@ -359,6 +365,7 @@ class AtomGraph(Graph):
             return 0.0
 
 
+    # TODO: function too complex, refactor
     def _get_all_valid_nodes(self, atom_contact_pairs):
         """
         Get all valid atom-level nodes across both chains.
@@ -401,6 +408,7 @@ class AtomGraph(Graph):
 
     
 
+    # TODO: function too complex, refactor
     def _get_edge_distance(self, node1, node2, db):
         """
         Minimal atom-atom distance between two residues.
@@ -415,6 +423,7 @@ class AtomGraph(Graph):
         )
         return np.sqrt(np.min(d2))
     
+    # TODO: function too complex, refactor
     def _get_internal_edges_chain(self, nodes, db, cutoff):
         """
         Find intra-chain edges and minimal atom-atom distance between residue pairs.
@@ -442,6 +451,7 @@ class AtomGraph(Graph):
         return np.array(onehot)
 
 
+    # TODO: function too complex, refactor
     def get_internal_edges(self, db):
         """
         Collect intra-chain edges for both chains using the atom-level cutoff.

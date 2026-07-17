@@ -46,6 +46,7 @@ def get_bio_model(pdbfile):
 # any residue or atom you like.
 
 
+# TODO: function too complex, refactor
 def get_depth_res(model):
     """Get the residue Depth
 
@@ -81,6 +82,7 @@ def get_depth_res(model):
 
 
 
+# TODO: function too complex, refactor
 def get_depth_contact_res(model, contact_res):
     """Get the residue Depth only for a specific set of residues
 

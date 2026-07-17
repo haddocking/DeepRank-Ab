@@ -291,6 +291,7 @@ def check_vdw_clashes(
 # ===============================================================
 # CHAIN AUTO-DETECTION
 # ===============================================================
+# TODO: function too complex, refactor
 def detect_chains_anarci(pdb_file: Path) -> Tuple[str, Optional[str], str]:
     parser = PDBParser(QUIET=True)
     structure = parser.get_structure("model", pdb_file)
@@ -644,6 +645,7 @@ def calculate_checksum(path: str, algo="sha256") -> str:
     return h.hexdigest()
 
 
+# TODO: function too complex, refactor
 def download_weights(url: str, dest: str) -> str:
     resp = requests.get(url, stream=True, timeout=10)
     resp.raise_for_status()
@@ -655,6 +657,7 @@ def download_weights(url: str, dest: str) -> str:
 
 
 
+# TODO: function too complex, refactor
 def fetch_weights() -> str:
     models = [
         (
@@ -707,6 +710,7 @@ def process_batch(labels, strs, outdir, representations):
     return paths
 
 
+# TODO: function too complex, refactor
 def get_embedding(fasta_file: Path, output_dir: Path) -> List[Path]:
     log.info("Generating ESM embeddings...")
 
@@ -860,12 +864,14 @@ def get_embeddings_dedup(
 # CLUSTERING AND GRAPH GENERATION
 # ===============================================================
 
+# TODO: function too complex, refactor
 def cluster(hdf5_path: str):
     dataset = HDF5DataSet(name="Train", root="./", database=hdf5_path)
     PreCluster(dataset, method="mcl")
     log.info("Clustering completed.")
 
 
+# TODO: function too complex, refactor
 def gen_graph_cdrs_orientation_contacts_one_by_one(
     pdb_dir: str,
     n_cores: int,
@@ -965,6 +971,7 @@ def add_embedding(work_dir: Path, hdf5_path: str):
 # MODEL EVALUATION
 # ===============================================================
 
+# TODO: function too complex, refactor
 def deeprank_evaluate_model(
     target_name: str,
     hdf5_test: str,
@@ -1126,6 +1133,7 @@ def parse_output(
 # ===============================================================
 # MAIN PIPELINE
 # ===============================================================
+# TODO: function too complex, refactor
 def main():
     parser = argparse.ArgumentParser(
         description=(

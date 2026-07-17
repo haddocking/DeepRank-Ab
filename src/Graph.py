@@ -28,6 +28,7 @@ class Graph(object):
         }
         self.clusters = None
 
+    # TODO: function too complex, refactor
     def get_score(self, ref):
         """
         Compute scores against a reference PDB using pdb2sql.StructureSimilarity.

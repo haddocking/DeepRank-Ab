@@ -9,6 +9,7 @@ except ImportError:
     print('Freesasa not found')
 
 
+# TODO: function too complex, refactor
 class BSA(object):
 
     def __init__(self, pdb_data, sqldb=None, chainA='A', chainB='B'):
