@@ -22,8 +22,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      # ghcr.io requires lowercase image names; github.repository has capitals here
-      # (DeepRank-Ab) so it can't be used as-is.
+      # ghcr.io requires lowercase image names; kept defensively even though
+      # github.repository (haddocking/deeprank-ab) is already lowercase.
       - name: Set lowercase image name
         id: image
         run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
