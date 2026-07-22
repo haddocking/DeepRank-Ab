@@ -253,9 +253,6 @@ class GraphHDF5(object):
                     contact_features=self.contact_features,
                 )
 
-            if ref is not None:
-                g.get_score(ref)
-
         except Exception as e:
             print(f"[WARN] Failed graph {name}: {e}")
             return  ### FIX: don't write bad graphs
@@ -280,8 +277,6 @@ class GraphHDF5(object):
                     contact_features=self.contact_features,
                     antigen_chainid=antigen_chainid
                 )
-                if ref is not None:
-                    g.get_score(ref)
 
             elif self.graph_type == 'atom':
                 from AtomGraph import AtomGraph
