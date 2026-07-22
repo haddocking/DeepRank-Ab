@@ -1,0 +1,24 @@
+#==========================================================================#
+ARG CUDA=12.8.0
+FROM nvidia/cuda:${CUDA}-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends build-essential && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
+ENV MPLCONFIGDIR=/tmp/matplotlib
+
+WORKDIR /app
+COPY . .
+RUN chmod +x src/tools/ANARCI/hmmscan src/tools/voronota/voronota
+
+RUN uv venv --python 3.10 && uv pip install .
+
+ENTRYPOINT ["/app/.venv/bin/deeprank-ab-predict"]
+#==========================================================================#

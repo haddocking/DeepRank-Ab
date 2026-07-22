@@ -1,9 +1,13 @@
 [project]
-name = "DeepRank-Ab"
-version = "0.1.0"
+name = "deeprank-ab"
+version = "1.0.0"
 description = "Scoring function for antibody-antigen interactions"
-authors = [{ name = "Xiaotong Xu" }, { email = "x.xu1@uu.nl" }]
-maintainers = [{ name = "BonvinLab" }, { email = "bonvinlab.support@uu.nl" }]
+requires-python = "==3.10.*"
+authors = [{ name = "Xiaotong Xu", email = "x.xu1@uu.nl" }]
+maintainers = [
+  { name = "Rodrigo V Honorato", email = "rvhonorato@pm.me" },
+  { name = "BonvinLab", email = "bonvinlab.support@uu.nl" },
+]
 readme = "README.md"
 license = { file = "LICENSE" }
 classifiers = [
@@ -21,6 +25,45 @@ keywords = [
   "computational biology",
 ]
 
+dependencies = [
+  "biopython==1.85",
+  "numpy==1.25.0",
+  "pandas==2.0.2",
+  "h5py==3.7.0",
+  "requests==2.29.0",
+  "scikit-learn==1.2.2",
+  "scipy==1.10.1",
+  "networkx==2.8.4",
+  "matplotlib==3.7.1",
+  "python-louvain==0.15",
+  "markov-clustering==0.0.6.dev0",
+  "pdb2sql==0.5.3",
+  "freesasa==2.2.0.post3",
+  "fair-esm==2.0.0",
+  "tqdm==4.65.0",
+  "python-dateutil==2.8.2",
+  "torch==2.0.1",
+  "torch-geometric==2.3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "coverage"]
+
+[project.scripts]
+deeprank-ab-predict = "scripts.inference:main"
+
+[tool.pytest.ini_options]
+markers = [
+  "e2e: full pipeline run against a real PDB, checks exact regression values (slow)",
+]
+
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src", "scripts"]
+
+[tool.coverage.run]
+source = ["src", "scripts"]
+omit = ["tests/*", "src/tools/ANARCI/*"]

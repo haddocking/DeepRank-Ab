@@ -14,7 +14,7 @@ import networkx as nx
 from scipy.sparse import csr_matrix
 import torch
 
-from torch_scatter import scatter_max, scatter_mean
+from torch_geometric.utils import scatter
 from torch_geometric.nn.pool.pool import pool_edge, pool_batch
 from torch_geometric.nn.pool.consecutive import consecutive_cluster
 from torch_geometric.data import Batch, Data
@@ -51,6 +51,7 @@ def get_preloaded_cluster(cluster, batch):
 # -----------------------------------------------------------------------------
 # Community detection
 # -----------------------------------------------------------------------------
+# TODO: function too complex, refactor
 def community_detection_per_batch(
     edge_index, batch, num_nodes, edge_attr=None, method="mcl"
 ):
@@ -139,6 +140,7 @@ def community_detection(edge_index, num_nodes, edge_attr=None, method="mcl"):
 # -----------------------------------------------------------------------------
 # Pooling by community
 # -----------------------------------------------------------------------------
+# TODO: function too complex, refactor
 def community_pooling(cluster, data):
     """Pool nodes/edges by community into a coarsened PyG graph.
 
@@ -160,11 +162,11 @@ def community_pooling(cluster, data):
     # 2) pool node features: max over scalars, mean over vectors
     if isinstance(data.x, tuple):
         s, v = data.x
-        new_s, _ = scatter_max(s, cluster, dim=0)
-        new_v = scatter_mean(v, cluster, dim=0) if v is not None else None
+        new_s = scatter(s, cluster, dim=0, reduce="max")
+        new_v = scatter(v, cluster, dim=0, reduce="mean") if v is not None else None
         new_x = (new_s, new_v)
     else:
-        new_s, _ = scatter_max(data.x, cluster, dim=0)
+        new_s = scatter(data.x, cluster, dim=0, reduce="max")
         new_x = new_s
 
     # 3) pool external edges (separate scalar/vector parts)
@@ -195,8 +197,8 @@ def community_pooling(cluster, data):
         new_internal_edge_attr  = None
 
     # 5) pool positions if present
-    new_pos   = scatter_mean(data.pos,   cluster, dim=0) if hasattr(data, "pos")   else None
-    new_pos2D = scatter_mean(data.pos2D, cluster, dim=0) if hasattr(data, "pos2D") else None
+    new_pos   = scatter(data.pos,   cluster, dim=0, reduce="mean") if hasattr(data, "pos")   else None
+    new_pos2D = scatter(data.pos2D, cluster, dim=0, reduce="mean") if hasattr(data, "pos2D") else None
 
     # 6) pool batch if present
     if hasattr(data, "batch") and data.batch is not None:

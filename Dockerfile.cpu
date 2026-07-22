@@ -1,0 +1,25 @@
+#==========================================================================#
+FROM ubuntu:22.04
+
+WORKDIR /app
+
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends build-essential ca-certificates && \
+  rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
+ENV MPLCONFIGDIR=/tmp/matplotlib
+
+COPY . .
+RUN chmod +x src/tools/ANARCI/hmmscan src/tools/voronota/voronota
+
+RUN uv venv --python 3.10
+
+# CPU-only torch to avoid pulling ~2GB of unused CUDA libs (see Dockerfile.gpu for GPU)
+RUN uv pip install torch==2.0.1 --extra-index-url https://download.pytorch.org/whl/cpu && \
+  uv pip install .
+
+ENTRYPOINT ["/app/.venv/bin/deeprank-ab-predict"]
+#==========================================================================#

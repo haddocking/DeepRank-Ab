@@ -1,10 +1,6 @@
-import os
 import numpy as np
 import networkx as nx
 import h5py
-from pdb2sql import StructureSimilarity
-import community
-import markov_clustering as mc
 
 
 class Graph(object):
@@ -27,32 +23,6 @@ class Graph(object):
             "bin_class": None,
         }
         self.clusters = None
-
-    def get_score(self, ref):
-        """
-        Compute scores against a reference PDB using pdb2sql.StructureSimilarity.
-        """
-        ref_name = os.path.splitext(os.path.basename(ref))[0]
-        sim = StructureSimilarity(self.pdb, ref)
-
-        if os.path.exists(ref_name + ".lzone"):
-            self.score["lrmsd"] = sim.compute_lrmsd_fast(method="svd", lzone=ref_name + ".lzone")
-            self.score["irmsd"] = sim.compute_irmsd_fast(method="svd", izone=ref_name + ".izone")
-        else:
-            self.score["lrmsd"] = sim.compute_lrmsd_fast(method="svd")
-            self.score["irmsd"] = sim.compute_irmsd_fast(method="svd")
-
-        self.score["fnat"] = sim.compute_fnat_fast()
-        self.score["dockQ"] = sim.compute_DockQScore(
-            self.score["fnat"], self.score["lrmsd"], self.score["irmsd"]
-        )
-        self.score["bin_class"] = self.score["irmsd"] < 4.0
-
-        # CAPRI class (lower irmsd -> better class)
-        self.score["capri_class"] = 5
-        for thr, val in zip([6.0, 4.0, 2.0, 1.0], [4, 3, 2, 1]):
-            if self.score["irmsd"] < thr:
-                self.score["capri_class"] = val
 
     def nx2h5(self, f5):
         """

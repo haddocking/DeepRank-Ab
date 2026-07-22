@@ -1,0 +1,31 @@
+name: publish to pypi
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  pypi_release:
+    name: builds and publishes to pypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/deeprank-ab
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.10"
+
+      # sdist + wheel: the wheel matters here specifically, not just convention --
+      # it's what carries the vendored hmmscan/voronota binaries with their
+      # executable bit intact (hatchling preserves permissions on wheel builds).
+      - name: build
+        run: uv build
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1

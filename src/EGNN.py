@@ -14,9 +14,8 @@ Key points
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_scatter import scatter_add
 from torch_geometric.nn import GlobalAttention, max_pool_x
-from torch_geometric.utils import dropout_adj
+from torch_geometric.utils import dropout_adj, scatter
 from tools.community_pooling import get_preloaded_cluster, community_pooling
 
 #ignore warnings
@@ -125,13 +124,13 @@ class EGNNBlockBalanced(nn.Module):
         m = m * a
 
         dh = self.phi_h(m)
-        dh_agg = scatter_add(dh, dst, dim=0, dim_size=h.size(0))
+        dh_agg = scatter(dh, dst, dim=0, dim_size=h.size(0), reduce="sum")
         h_new = self.ln(h + torch.sigmoid(self.alpha) * dh_agg)
 
         # coordinate update along r_ij with learned scalar coefficient
         coeff = self.phi_x(m) * x_scale
         dx = r_ij * coeff
-        dx_agg = scatter_add(dx, dst, dim=0, dim_size=x.size(0))
+        dx_agg = scatter(dx, dst, dim=0, dim_size=x.size(0), reduce="sum")
         x_new = x + dx_agg
 
         return h_new, x_new

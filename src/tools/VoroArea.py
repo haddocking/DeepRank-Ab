@@ -96,6 +96,7 @@ class VoronotaAreas():
 
         return str(voronota_exec)
 
+    # TODO: function too complex, refactor
     @staticmethod
     def run_voro_contacts(pdb_fpath, voronota_exec) -> tuple[bytes, bytes]:
         # Read input file as bytes

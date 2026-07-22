@@ -1,0 +1,70 @@
+name: build and push docker image
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        variant: [cpu, gpu]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # ghcr.io requires lowercase image names; kept defensively even though
+      # github.repository (haddocking/deeprank-ab) is already lowercase.
+      - name: Set lowercase image name
+        id: image
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # PRs get a pr-<number>-<variant> tag; releases get their tag name plus
+      # :latest, both suffixed with -cpu/-gpu so neither variant is an
+      # ambiguous unsuffixed default.
+      - name: Determine image tags
+        id: tags
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}"
+          VARIANT="${{ matrix.variant }}"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            {
+              echo "tags<<EOF"
+              echo "$IMAGE:${{ github.event.release.tag_name }}-$VARIANT"
+              echo "$IMAGE:latest-$VARIANT"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=$IMAGE:pr-${{ github.event.number }}-$VARIANT" >> "$GITHUB_OUTPUT"
+          fi
+
+      # linux/amd64 only: the vendored hmmscan/voronota binaries are x86-64.
+      - name: Build and push Docker image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile.${{ matrix.variant }}
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
