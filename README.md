@@ -5,7 +5,7 @@ models and predicting DockQ scores. Given a raw PDB, it runs chain detection, fe
 (ESM-2 embeddings, CDR annotation, atom-level graphs), and EGNN inference to produce a predicted
 DockQ score plus structural quality flags.
 
-Preprint: https://www.biorxiv.org/content/10.64898/2025.12.03.691974v1
+Publication: https://www.nature.com/articles/s42003-026-10408-4
 
 ## Installation
 
