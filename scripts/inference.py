@@ -5,13 +5,9 @@ DeepRank-Ab Inference Pipeline
 
 import warnings
 
+warnings.filterwarnings("ignore", message="An issue occurred while importing 'pyg-lib'")
 warnings.filterwarnings(
-    "ignore",
-    message="An issue occurred while importing 'pyg-lib'"
-)
-warnings.filterwarnings(
-    "ignore",
-    message="An issue occurred while importing 'torch-sparse'"
+    "ignore", message="An issue occurred while importing 'torch-sparse'"
 )
 
 
@@ -32,6 +28,7 @@ import torch
 from Bio.PDB import PDBParser, PDBIO
 from esm import FastaBatchedDataset, pretrained
 import numpy as np
+from tqdm import tqdm
 
 # Add project root
 import sys
@@ -82,7 +79,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 TOKS_PER_BATCH = 4096
 REPR_LAYERS = [33]
 TRUNCATION_SEQ_LENGTH = 2500
-INCLUDE = ["per_tok"] 
+INCLUDE = ["per_tok"]
 
 MAX_cores = 50
 BATCH_SIZE = 64
@@ -114,6 +111,7 @@ log.addHandler(handler)
 # HELPERS
 # ===============================================================
 
+
 def _norm_chain(x: Optional[str]) -> Optional[str]:
     """Normalize chain ID args. Treat '-', 'none', 'null' etc. as missing."""
     if x is None:
@@ -126,9 +124,7 @@ def _norm_chain(x: Optional[str]) -> Optional[str]:
 
 def _free_chain_id(occupied: set) -> str:
     """Return the first single-letter chain ID not in `occupied` and not 'B'."""
-    candidates = (
-        "ACDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    )
+    candidates = "ACDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
     for c in candidates:
         if c not in occupied:
             return c
@@ -208,7 +204,7 @@ def merge_antigen_chains(
     all_chain_ids = {c.id for c in m0.get_chains()}
     for i, cid in enumerate(antigen_chain_ids):
         if cid not in all_chain_ids:
-            #log.warning(f"Antigen chain '{cid}' not found in {pdb_file.name}, skipping.")
+            # log.warning(f"Antigen chain '{cid}' not found in {pdb_file.name}, skipping.")
             continue
 
         src = m0[cid]
@@ -226,20 +222,21 @@ def merge_antigen_chains(
         if i < len(antigen_chain_ids) - 1:
             cur_resseq += chain_gap
 
-        #log.info(f"  Chain '{cid}': {len(residues)} residues merged into 'B'")
+        # log.info(f"  Chain '{cid}': {len(residues)} residues merged into 'B'")
 
     output_pdb.parent.mkdir(parents=True, exist_ok=True)
     io = PDBIO()
     io.set_structure(s)
     io.save(str(output_pdb))
 
-    #log.info(f"Merged antigen PDB -> {output_pdb}")
+    # log.info(f"Merged antigen PDB -> {output_pdb}")
     return output_pdb, remap
 
 
 # ===============================================================
 # WORKSPACE SETUP
 # ===============================================================
+
 
 def setup_workspace(identificator: str) -> Path:
     workspace = Path.cwd() / identificator
@@ -258,8 +255,8 @@ def load_vdw_bounds(bounds_path: Path = VDW_BOUNDS_PATH) -> Tuple[float, float]:
     with open(bounds_path) as fh:
         b = json.load(fh)
     return float(b["vdw_energy_p01"]), float(b["vdw_energy_p99"])
- 
- 
+
+
 def check_vdw_clashes(
     graph_hdf5: Path,
     bounds_path: Path = VDW_BOUNDS_PATH,
@@ -271,20 +268,22 @@ def check_vdw_clashes(
     """
     lo, hi = load_vdw_bounds(bounds_path)
     log.info(f"VdW bounds loaded: [{lo:.4f}, {hi:.4f}] (p01-p99 of training data)")
- 
+
     results: Dict[str, bool] = {}
- 
+
     with h5py.File(graph_hdf5, "r") as f:
         for mol in f.keys():
-            vdw     = np.asarray(f[mol]["edge_data"]["vdw"][()], dtype=np.float32).ravel()
-            frac    = float(((vdw < lo) | (vdw > hi)).sum()) / len(vdw)
+            vdw = np.asarray(f[mol]["edge_data"]["vdw"][()], dtype=np.float32).ravel()
+            frac = float(((vdw < lo) | (vdw > hi)).sum()) / len(vdw)
             flagged = frac > 0.05
             results[mol] = flagged
-            log.info(f"  [{mol}] {'⚠ FLAGGED' if flagged else 'OK'} ({frac*100:.1f}% outlier edges)")
- 
+            log.info(
+                f"  [{mol}] {'⚠ FLAGGED' if flagged else 'OK'} ({frac * 100:.1f}% outlier edges)"
+            )
+
     n_flagged = sum(results.values())
     log.info(f"VdW clash check complete: {n_flagged}/{len(results)} model(s) flagged")
- 
+
     return results
 
 
@@ -316,9 +315,8 @@ def detect_chains_anarci(pdb_file: Path) -> Tuple[str, Optional[str], str]:
             hmmerpath=hmmscan_path,
         )
 
-        hit = results[0]      # hits for this sequence
-        det = details[0]      # detail dicts for this sequence
-
+        hit = results[0]  # hits for this sequence
+        det = details[0]  # detail dicts for this sequence
 
         if hit is None or all(h is None for h in hit):
             antigen_chains.append(chain.id)
@@ -332,8 +330,9 @@ def detect_chains_anarci(pdb_file: Path) -> Tuple[str, Optional[str], str]:
             else:
                 antigen_chains.append(chain.id)
 
-            log.info(f"Chain {chain.id}: ANARCI chain_type = {chain_type} if hit and det else 'no hit'")
-
+            log.info(
+                f"Chain {chain.id}: ANARCI chain_type = {chain_type} if hit and det else 'no hit'"
+            )
 
     log.info(
         f"ANARCI detected → heavy={heavy_chains}, light={light_chains}, "
@@ -381,22 +380,22 @@ def split_input_pdb(pdb_file: Path, out_dir: Path) -> List[Path]:
     Split ensemble PDB into per-model files using REMARK MODEL names.
     Falls back to 'unknown_model_N.pdb' if REMARK is missing or unparseable.
     For a single-model PDB (no MODEL/ENDMDL records), copies it directly.
- 
+
     Example REMARK format:
         REMARK  4      MODEL     9 FROM Target331/27c9d79c22ae46bc3cbc4f26648487a6.pdb
     """
     out_dir.mkdir(parents=True, exist_ok=True)
- 
+
     # Detect single-model PDB: no MODEL record present
     with open(pdb_file, "r") as f:
         has_model_records = any(line.startswith("MODEL") for line in f)
- 
+
     if not has_model_records:
         out_path = out_dir / pdb_file.name
         shutil.copy(pdb_file, out_path)
         log.info(f"Single-model PDB — copied directly to {out_path}")
         return [out_path]
- 
+
     # Pre-scan: build model_index -> {name, remark} from REMARK lines
     remark_map: Dict[int, Dict[str, str]] = {}
     with open(pdb_file, "r") as f:
@@ -410,33 +409,37 @@ def split_input_pdb(pdb_file: Path, out_dir: Path) -> List[Path]:
                         raise ValueError("empty name")
                     remark_map[model_idx] = {"name": name, "remark": line.strip()}
                 except (IndexError, ValueError):
-                    log.warning(f"Could not parse REMARK line, will use model index: {line.strip()}")
- 
+                    log.warning(
+                        f"Could not parse REMARK line, will use model index: {line.strip()}"
+                    )
+
     log.info(f"{len(remark_map)} REMARK entries found in {pdb_file.name}")
- 
+
     saved: List[Path] = []
     current_lines: List[str] = []
     current_model_idx: Optional[int] = None
     in_model = False
- 
+
     def flush():
         if not current_lines:
             return
-        info   = remark_map.get(current_model_idx, {})
-        name   = info.get("name") or f"unknown_model_{current_model_idx}"
+        info = remark_map.get(current_model_idx, {})
+        name = info.get("name") or f"unknown_model_{current_model_idx}"
         remark = info.get("remark")
- 
+
         if not info:
-            log.warning(f"No REMARK for model index {current_model_idx} — saving as '{name}.pdb'")
- 
+            log.warning(
+                f"No REMARK for model index {current_model_idx} — saving as '{name}.pdb'"
+            )
+
         out_path = out_dir / f"{name}.pdb"
         with open(out_path, "w") as fh:
             if remark:
                 fh.write(remark + "\n")
             fh.writelines(current_lines)
         saved.append(out_path)
-        #log.info(f"Saved model {current_model_idx} -> {out_path.name}")
- 
+        # log.info(f"Saved model {current_model_idx} -> {out_path.name}")
+
     with open(pdb_file, "r") as f:
         for line in f:
             if line.startswith("MODEL"):
@@ -446,20 +449,22 @@ def split_input_pdb(pdb_file: Path, out_dir: Path) -> List[Path]:
                     current_model_idx = int(parts[1])
                 except (IndexError, ValueError):
                     current_model_idx = len(saved)
-                    log.warning(f"Could not parse MODEL index from: {line.strip()} — using {current_model_idx}")
+                    log.warning(
+                        f"Could not parse MODEL index from: {line.strip()} — using {current_model_idx}"
+                    )
                 current_lines = [line]
                 in_model = True
- 
+
             elif line.startswith("ENDMDL"):
                 current_lines.append(line)
                 flush()
                 current_lines = []
                 current_model_idx = None
                 in_model = False
- 
+
             elif in_model:
                 current_lines.append(line)
- 
+
     # Safety net: flush last model if file ends without ENDMDL
     if current_lines and current_model_idx is not None:
         log.warning(f"Model {current_model_idx} has no ENDMDL — flushing anyway.")
@@ -468,12 +473,29 @@ def split_input_pdb(pdb_file: Path, out_dir: Path) -> List[Path]:
     log.info(f"Split PDB into {len(saved)} model(s) -> {out_dir}")
     return saved
 
+
 def three_to_one() -> dict:
     return {
-        "ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C",
-        "GLN": "Q", "GLU": "E", "GLY": "G", "HIS": "H", "ILE": "I",
-        "LEU": "L", "LYS": "K", "MET": "M", "PHE": "F", "PRO": "P",
-        "SER": "S", "THR": "T", "TRP": "W", "TYR": "Y", "VAL": "V",
+        "ALA": "A",
+        "ARG": "R",
+        "ASN": "N",
+        "ASP": "D",
+        "CYS": "C",
+        "GLN": "Q",
+        "GLU": "E",
+        "GLY": "G",
+        "HIS": "H",
+        "ILE": "I",
+        "LEU": "L",
+        "LYS": "K",
+        "MET": "M",
+        "PHE": "F",
+        "PRO": "P",
+        "SER": "S",
+        "THR": "T",
+        "TRP": "W",
+        "TYR": "Y",
+        "VAL": "V",
     }
 
 
@@ -605,7 +627,7 @@ def convert_pdb_to_fastas(
         f.write(f">{root}.A\n{seq_H + seq_L}\n")
         f.write(f">{root}.B\n{seq_Ag}\n")
 
-    #log.info(f"FASTA files create for {pdb_file.name}")
+    # log.info(f"FASTA files create for {pdb_file.name}")
     return fasta_annot, fasta_esm
 
 
@@ -637,6 +659,7 @@ def preprocess_input_pdb(
 # ESM EMBEDDINGS
 # ===============================================================
 
+
 def calculate_checksum(path: str, algo="sha256") -> str:
     h = hashlib.new(algo)
     with open(path, "rb") as f:
@@ -647,14 +670,24 @@ def calculate_checksum(path: str, algo="sha256") -> str:
 
 # TODO: function too complex, refactor
 def download_weights(url: str, dest: str) -> str:
+    log.info(f"Downloading {url} -> {dest}")
     resp = requests.get(url, stream=True, timeout=10)
     resp.raise_for_status()
-    with open(dest, "wb") as f:
+    total = int(resp.headers.get("content-length", 0))
+    with (
+        open(dest, "wb") as f,
+        tqdm(
+            total=total,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc=Path(dest).name,
+        ) as bar,
+    ):
         for chunk in resp.iter_content(8192):
             f.write(chunk)
+            bar.update(len(chunk))
     return dest
-
-
 
 
 # TODO: function too complex, refactor
@@ -701,7 +734,6 @@ def process_batch(labels, strs, outdir, representations):
             data["representations"] = {
                 l: t[i, 1 : trunc + 1].clone() for l, t in representations.items()
             }
-
 
         outpath = outdir / f"{label}.pt"
         torch.save(data, outpath)
@@ -838,10 +870,10 @@ def get_embeddings_dedup(
         canon = canonical_label[seq_hash]
         canon_pt = output_dir / f"{canon}.pt"
 
-        for label in labels[1:]:          # skip the canonical one (already written)
+        for label in labels[1:]:  # skip the canonical one (already written)
             dest_pt = output_dir / f"{label}.pt"
             if dest_pt.exists() or dest_pt.is_symlink():
-                continue                  # already resolved from a previous run
+                continue  # already resolved from a previous run
 
             try:
                 dest_pt.symlink_to(canon_pt.resolve())
@@ -863,6 +895,7 @@ def get_embeddings_dedup(
 # ===============================================================
 # CLUSTERING AND GRAPH GENERATION
 # ===============================================================
+
 
 # TODO: function too complex, refactor
 def cluster(hdf5_path: str):
@@ -971,6 +1004,7 @@ def add_embedding(work_dir: Path, hdf5_path: str):
 # MODEL EVALUATION
 # ===============================================================
 
+
 # TODO: function too complex, refactor
 def deeprank_evaluate_model(
     target_name: str,
@@ -1053,6 +1087,7 @@ def ca_coords(pdb_file: Path, chain_id: str, max_resid=125) -> np.ndarray:
 # LOW-CONTACT FLAG FOR ANTIBODIES
 # ===============================================================
 
+
 def flag_low_contacts(
     pdb_file: Path, heavy_chain_id: str, light_chain_id: str, threshold: int = 15
 ):
@@ -1081,7 +1116,6 @@ def flag_low_contacts(
     return False
 
 
-
 def parse_output(
     csv_output: str,
     original_pdb_dir: Path,
@@ -1091,43 +1125,45 @@ def parse_output(
 ) -> None:
     """
     Add quality flags based on ORIGINAL PDBs (before merging) and VdW clash check.
- 
+
     Columns added to the CSV:
         quality_flag   – HL contact check ('ok' / 'low_HL_contacts' / 'not_applicable')
         vdw_clash_flag – 'ok' / 'potential_clash' / 'not_checked'
     """
     df = pd.read_csv(csv_output)
     df = df.rename(columns={"mol": "pdb_id", "dockq": "predicted_dockq"})
- 
-    hl_flags  = []
+
+    hl_flags = []
     vdw_flags = []
- 
+
     for pdb_id in df["pdb_id"]:
         # ---- HL contact check (existing logic) ----
-        matches  = list(original_pdb_dir.glob(f"{pdb_id}*.pdb"))
+        matches = list(original_pdb_dir.glob(f"{pdb_id}*.pdb"))
         pdb_file = matches[0]
- 
+
         if not heavy_chain_id or not light_chain_id:
             hl_flags.append("not_applicable")
         else:
             is_bad = flag_low_contacts(pdb_file, heavy_chain_id, light_chain_id)
             hl_flags.append("low_HL_contacts" if is_bad else "ok")
- 
+
         # ---- VdW clash check ----
         bool_flag = vdw_clash_results.get(pdb_id, None) if vdw_clash_results else None
         if bool_flag is True:
             vdw_flags.append("potential_clash")
         elif bool_flag is False:
             vdw_flags.append("ok")
- 
-    df["HL_contact_flag"]   = hl_flags
-    df["vdw_clash_flag"] =  vdw_flags
- 
+
+    df["HL_contact_flag"] = hl_flags
+    df["vdw_clash_flag"] = vdw_flags
+
     df = df.sort_values(by="predicted_dockq", ascending=False)
     df.to_csv(csv_output, index=False)
- 
+
     n_clash = (df["vdw_clash_flag"] == "potential_clash").sum()
-    log.info(f"Output written → {csv_output} with {n_clash} potential VdW clash(es) flagged.")
+    log.info(
+        f"Output written → {csv_output} with {n_clash} potential VdW clash(es) flagged."
+    )
 
 
 # ===============================================================
@@ -1142,10 +1178,7 @@ def main():
         )
     )
 
-    parser.add_argument(
-        "pdb_file",
-        help="Input PDB file (single model or ensemble)"
-    )
+    parser.add_argument("pdb_file", help="Input PDB file (single model or ensemble)")
 
     parser.add_argument(
         "--heavy_chain_id",
@@ -1194,9 +1227,7 @@ def main():
     pdb_models = split_input_pdb(copied, split_dir)
 
     if not pdb_models:
-        raise RuntimeError(
-            f"No models were produced from {copied}"
-        )
+        raise RuntimeError(f"No models were produced from {copied}")
 
     # ============================================================
     # 3. Detect heavy / light / antigen chains
@@ -1206,20 +1237,12 @@ def main():
         LID = manual_light
         AID_list = [manual_antigen]
 
-        log.info(
-            f"Using manually specified chains -> "
-            f"H={HID}, L={LID}, Ag={AID_list}"
-        )
+        log.info(f"Using manually specified chains -> H={HID}, L={LID}, Ag={AID_list}")
 
     else:
-        log.info(
-            "Chain IDs not fully specified -- "
-            "running ANARCI auto-detection..."
-        )
+        log.info("Chain IDs not fully specified -- running ANARCI auto-detection...")
 
-        HID, LID, AID_list = detect_chains_anarci(
-            pdb_models[0]
-        )
+        HID, LID, AID_list = detect_chains_anarci(pdb_models[0])
 
         if manual_heavy:
             HID = manual_heavy
@@ -1230,16 +1253,12 @@ def main():
         if manual_antigen:
             AID_list = [manual_antigen]
 
-        log.info(
-            f"Final chains -> "
-            f"H={HID}, L={LID}, Ag={AID_list}"
-        )
+        log.info(f"Final chains -> H={HID}, L={LID}, Ag={AID_list}")
 
     # ============================================================
     # 4. Merge multi-chain antigens into chain B
     # ============================================================
     if len(AID_list) > 1:
-
         # log.info(
         #     f"Multiple antigen chains {AID_list} detected -- "
         #     f"merging into chain 'B' for all "
@@ -1250,10 +1269,7 @@ def main():
         remap: Dict[str, str] = {}
 
         for pdb in pdb_models:
-            merged_out = (
-                pdb.parent /
-                f"{pdb.stem}_merged_ag.pdb"
-            )
+            merged_out = pdb.parent / f"{pdb.stem}_merged_ag.pdb"
 
             _, remap = merge_antigen_chains(
                 pdb,
@@ -1283,20 +1299,14 @@ def main():
     else:
         AID = AID_list[0]
 
-    log.info(
-        f"Chains after merge -> "
-        f"H={HID}, L={LID}, Ag={AID}"
-    )
+    log.info(f"Chains after merge -> H={HID}, L={LID}, Ag={AID}")
 
     # ============================================================
     # 5. Rename workspace
     # ============================================================
     lid_tag = LID if LID else "nb"
 
-    identificator = (
-        f"{pdb_file.stem}-deeprank_ab_pred_"
-        f"{HID}{lid_tag}_{AID}"
-    )
+    identificator = f"{pdb_file.stem}-deeprank_ab_pred_{HID}{lid_tag}_{AID}"
 
     final_work = Path.cwd() / identificator
 
@@ -1306,10 +1316,7 @@ def main():
 
         split_dir = work / "original_models"
 
-        pdb_models = [
-            split_dir / p.name
-            for p in pdb_models
-        ]
+        pdb_models = [split_dir / p.name for p in pdb_models]
 
     log.info(f"Workspace -> {work}")
 
@@ -1370,19 +1377,14 @@ def main():
     # ============================================================
     # 8. Graph generation
     # ============================================================
-    pdbs_for_graph = sorted(
-        processed_dir.glob("*.pdb")
-    )
+    pdbs_for_graph = sorted(processed_dir.glob("*.pdb"))
 
     n_cores_graph = clamp_cores(
         cores,
         len(pdbs_for_graph),
     )
 
-    graph_out = (
-        work /
-        f"{identificator}_graph.hdf5"
-    )
+    graph_out = work / f"{identificator}_graph.hdf5"
 
     gen_graph_cdrs_orientation_contacts_one_by_one(
         pdb_dir=str(processed_dir),
@@ -1404,7 +1406,6 @@ def main():
         graph_hdf5=graph_out,
         bounds_path=VDW_BOUNDS_PATH,
     )
-    
 
     # ============================================================
     # 10. Evaluation
@@ -1418,14 +1419,9 @@ def main():
         save_name=f"{identificator}_predictions.hdf5",
     )
 
-    pred_h5 = (
-        work /
-        f"{identificator}_predictions.hdf5"
-    )
+    pred_h5 = work / f"{identificator}_predictions.hdf5"
 
-    csv_out = hdf5_to_csv(
-        str(pred_h5)
-    )
+    csv_out = hdf5_to_csv(str(pred_h5))
 
     # ============================================================
     # 11. Final output
@@ -1441,3 +1437,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
