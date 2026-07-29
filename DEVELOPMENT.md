@@ -32,7 +32,7 @@ Build and test either variant locally before pushing:
 
 ```bash
 docker build --platform linux/amd64 -f Dockerfile.cpu -t deeprank-ab:cpu .
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/example":/data -w /data deeprank-ab:cpu test.pdb
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/example":/data -v deeprank-ab-weights:/cache -w /data deeprank-ab:cpu test.pdb
 ```
 
 `--platform linux/amd64` matters even on Apple Silicon — the vendored `hmmscan`/`voronota`

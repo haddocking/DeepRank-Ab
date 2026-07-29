@@ -41,12 +41,15 @@ work-in-progress images, not for general use.
 
 Mount your data directory to `/data`, set it as the working directory, and pass
 `--user "$(id -u):$(id -g)"` — without it, the container runs as root and every file it creates
-(workspace, `*.hdf5`, the ~2.5GB downloaded ESM-2 weights) ends up root-owned on your host:
+(workspace, `*.hdf5`) ends up root-owned on your host. Also mount a named volume at `/cache`: the
+image downloads the ~2.5GB ESM-2 weights there on first run, and reuses them on every run after —
+without it, each `docker run` re-downloads the weights from scratch:
 
 ```bash
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   -v "$PWD":/data \
+  -v deeprank-ab-weights:/cache \
   -w /data \
   ghcr.io/haddocking/deeprank-ab:latest-cpu \
   test.pdb
@@ -55,7 +58,7 @@ docker run --rm \
 Chain-override flags work the same way, appended after the PDB file:
 
 ```bash
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/data -w /data \
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/data -v deeprank-ab-weights:/cache -w /data \
   ghcr.io/haddocking/deeprank-ab:latest-cpu \
   test.pdb --heavy_chain_id H --light_chain_id L --antigen_chain_id A
 ```
@@ -69,7 +72,7 @@ The `*-gpu` image (built on `nvidia/cuda`) needs the
 installed on the host, plus `--gpus all`:
 
 ```bash
-docker run --rm --gpus all --user "$(id -u):$(id -g)" -v "$PWD":/data -w /data \
+docker run --rm --gpus all --user "$(id -u):$(id -g)" -v "$PWD":/data -v deeprank-ab-weights:/cache -w /data \
   ghcr.io/haddocking/deeprank-ab:latest-gpu \
   test.pdb
 ```
