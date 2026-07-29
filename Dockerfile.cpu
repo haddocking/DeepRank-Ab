@@ -11,6 +11,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 ENV MPLCONFIGDIR=/tmp/matplotlib
+ENV WEIGHT_PATH=/cache/esm2_t33_650M_UR50D.pt
+ENV REG_WEIGHT_PATH=/cache/esm2_t33_650M_UR50D-contact-regression.pt
+RUN mkdir -p /cache
 
 COPY . .
 RUN chmod +x src/tools/ANARCI/hmmscan src/tools/voronota/voronota

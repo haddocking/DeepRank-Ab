@@ -707,6 +707,7 @@ def fetch_weights() -> str:
         ),
     ]
 
+    resolved = {}
     for env_var, fname, url, checksum in models:
         path = os.getenv(env_var) or fname
         if not os.path.exists(path):
@@ -716,7 +717,9 @@ def fetch_weights() -> str:
             log.warning(f"Checksum mismatch for {path}, re-downloading.")
             download_weights(url, path)
 
-    return f"{ESM_MODEL}.pt"
+        resolved[env_var] = path
+
+    return resolved["WEIGHT_PATH"]
 
 
 def get_model_output(toks, model, layers):
